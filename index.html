@@ -192,11 +192,17 @@
         <label class="field-label" for="custName">Name *</label>
         <input type="text" id="custName" required maxlength="80">
 
+        <label class="field-label" for="custEmail">Email *</label>
+        <input type="email" id="custEmail" required maxlength="120"
+               autocomplete="email" inputmode="email"
+               placeholder="Where we'll send your order confirmation">
+        <div class="hint">We'll email your confirmation and the link to change your order.</div>
+
         <label class="field-label" for="custHandle">Instagram handle</label>
         <input type="text" id="custHandle" maxlength="60" placeholder="@yourhandle">
 
-        <label class="field-label" for="custContact">Phone number *</label>
-        <input type="tel" id="custContact" required maxlength="40" placeholder="So we can reach you about your order">
+        <label class="field-label" for="custContact">Phone number</label>
+        <input type="tel" id="custContact" maxlength="40" placeholder="Optional, in case we need to reach you on pickup day">
 
         <label class="field-label" for="custNotes">Notes (allergies, special requests)</label>
         <textarea id="custNotes" maxlength="300"></textarea>
@@ -478,6 +484,15 @@
     return out.map(labelOf);
   }
 
+  // Deliberately loose. The only thing worth catching here is a typo that
+  // would make the confirmation undeliverable, like a missing @ or a
+  // trailing comma. Anything stricter starts rejecting real addresses, and
+  // the actual proof that an address works is the verification email.
+  function looksLikeEmail(v) {
+    const s = String(v || "").trim();
+    return s.length >= 5 && s.length <= 120 && /^[^\s@,]+@[^\s@,]+\.[^\s@,]{2,}$/.test(s);
+  }
+
   function portionsFor(items) {
     return (items || []).reduce((sum, it) => {
       const m = MENU.find(x => x.name === it.name);
@@ -751,7 +766,7 @@
 
       const ok = items.length > 0
         && document.getElementById("custName").value.trim()
-        && document.getElementById("custContact").value.trim()
+        && looksLikeEmail(document.getElementById("custEmail").value)
         && dateInput.value && timeSelect.value
         && !dayState.full && !overCapacity;
       document.getElementById("submitBtn").disabled = !ok;
@@ -768,7 +783,7 @@
       refresh();
     });
     ["input", "change"].forEach(ev => {
-      ["custName", "custContact", "pickupDate", "pickupTime"].forEach(id =>
+      ["custName", "custEmail", "custContact", "pickupDate", "pickupTime"].forEach(id =>
         document.getElementById(id).addEventListener(ev, refresh));
     });
 
@@ -791,8 +806,18 @@
 
       const name = document.getElementById("custName").value.trim();
       const handle = document.getElementById("custHandle").value.trim().replace(/^@/, "");
+      // Lower-cased on the way in. Addresses are case-insensitive in
+      // practice, and this is about to become the thing that identifies a
+      // customer for sign-in, so "Ana@x.com" and "ana@x.com" must not end up
+      // as two different people.
+      const email = document.getElementById("custEmail").value.trim().toLowerCase();
       const contact = document.getElementById("custContact").value.trim();
       const notes = document.getElementById("custNotes").value.trim();
+
+      if (!looksLikeEmail(email)) {
+        showError("That email address doesn't look right. Please check it, since your confirmation goes there.");
+        return;
+      }
       const pickupDate = dateInput.value;
       const pickupTime = timeSelect.value;
 
@@ -810,7 +835,7 @@
       // their order is placed and then discovering the day was full would be
       // worse than a couple of seconds of waiting.
       const savePromise = bookWithCapacity(pickupDate, portionsFor(items), {
-        name, handle, contact, items, total,
+        name, handle, email, contact, items, total,
         pickupDate, pickupTime, pickupAt,
         orderDate: now.toISOString().slice(0, 10),
         orderTime: now.toISOString().slice(11, 16),
@@ -849,7 +874,7 @@
         fetch(SHEET_WEBHOOK_URL, {
           method: "POST", mode: "no-cors",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: JSON.stringify({ name, handle, contact, items, total, pickupDate, pickupTime, notes }),
+          body: JSON.stringify({ name, handle, email, contact, items, total, pickupDate, pickupTime, notes }),
         }).catch(() => {});
       }
 
