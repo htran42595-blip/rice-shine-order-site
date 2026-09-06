@@ -332,6 +332,9 @@
   import {
     initializeFirestore, collection, addDoc, getDocs, doc, getDoc, updateDoc, serverTimestamp,
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
+  import {
+    initializeAppCheck, ReCaptchaEnterpriseProvider,
+  } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app-check.js";
 
   // Public client config. Safe to expose: Firestore security rules, not this,
   // decide who can read or write what.
@@ -345,6 +348,21 @@
   };
   window.__riceShineBooted = true;
   const app = initializeApp(firebaseConfig);
+
+  // App Check proves requests come from this real website rather than a
+  // script someone points at the database. Invisible to customers: no
+  // puzzles, no checkbox. Without it, a public order form is trivial to
+  // flood with fake orders, each of which would land on the board and in
+  // the Sheet. Wrapped in try/catch because a failure to set this up should
+  // never stop a real customer ordering.
+  try {
+    initializeAppCheck(app, {
+      provider: new ReCaptchaEnterpriseProvider("6Le6p6wtAAAAAJuCQo-O4G-3xVGxzj0ajz-Hf-7i"),
+      isTokenAutoRefreshEnabled: true,
+    });
+  } catch (e) {
+    console.warn("App Check init failed:", e);
+  }
 
   // Some mobile carriers and cafe wifi block the streaming connection
   // Firestore prefers. Without this the SDK can retry for a long time before
