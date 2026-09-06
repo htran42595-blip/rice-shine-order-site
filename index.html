@@ -60,6 +60,11 @@
   .item-info { flex:1; min-width:0; }
   .item-name { font-weight:700; font-size:15px; }
   .item-desc { color: var(--ink-soft); font-size:12.5px; margin-top:2px; }
+  /* The availability line sits above the generic "we'll do our best" hint,
+     so it needs to read as the more important of the two when it's a
+     warning, without shouting on the ordinary case. */
+  .day-note { margin-bottom:2px; }
+  .day-note.warn { color: var(--warn); font-weight:600; }
   .item-price { color: var(--tea); font-weight:700; font-size:14px; margin-top:2px; }
 
   .stepper { display:flex; align-items:center; border:1px solid var(--line);
@@ -178,6 +183,7 @@
         <select id="pickupTime" required>
           <option value="" disabled selected>Choose a time</option>
         </select>
+        <div class="hint day-note" id="dayNote" hidden></div>
         <div class="hint">We'll do our best to have it ready at your chosen time. If we're running behind we'll reach out.</div>
       </div>
 
@@ -284,7 +290,9 @@
       <h2>Pickup &amp; notes</h2>
       <label class="field-label" for="mPickupDate">Pickup date</label>
       <input type="date" id="mPickupDate">
-      <div class="hint">Pickup time stays <strong id="timeEcho"></strong>. To move the time, message us on Instagram.</div>
+      <label class="field-label" for="mPickupTime">Pickup time</label>
+      <select id="mPickupTime"></select>
+      <div class="hint day-note" id="mDayNote" hidden></div>
 
       <label class="field-label" for="mNotes">Notes (allergies, special requests)</label>
       <textarea id="mNotes" maxlength="300"></textarea>
@@ -346,6 +354,7 @@
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
   import {
     initializeFirestore, collection, addDoc, getDocs, doc, getDoc, updateDoc, serverTimestamp,
+    runTransaction,
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
   import {
     initializeAppCheck, ReCaptchaEnterpriseProvider,
@@ -393,14 +402,166 @@
   // One menu for both the order form and the edit screen. These used to be
   // two separate files with two copies of this list, which meant a price
   // change had to be made twice or the two screens would disagree.
+  // "portions" is kitchen capacity, not price. It matches the dashboard's
+  // own math (1 personal = 1, 1 shareable = 3) so the daily cap below means
+  // the same thing on both screens. Drinks cost money but cost no prep, so
+  // they are 0 and never use up a day's capacity.
   const MENU = [
-    { id: "personal",    name: "Personal Tray",     price: 15, desc: "Single-serving sushi bake" },
-    { id: "shareable",   name: "Shareable Tray",    price: 45, desc: "Feeds a group" },
-    { id: "green-tea",   name: "Green Thai Tea",    price: 4,  desc: "" },
-    { id: "orange-tea",  name: "Orange Thai Tea",   price: 4,  desc: "" },
-    { id: "viet-coffee", name: "Vietnamese Coffee", price: 4,  desc: "" },
+    { id: "personal",    name: "Personal Tray",     price: 15, portions: 1, desc: "Single-serving sushi bake" },
+    { id: "shareable",   name: "Shareable Tray",    price: 45, portions: 3, desc: "Feeds a group" },
+    { id: "green-tea",   name: "Green Thai Tea",    price: 4,  portions: 0, desc: "" },
+    { id: "orange-tea",  name: "Orange Thai Tea",   price: 4,  portions: 0, desc: "" },
+    { id: "viet-coffee", name: "Vietnamese Coffee", price: 4,  portions: 0, desc: "" },
   ];
   const PAY_METHOD = "Venmo / Zelle / Apple Pay / cash — at pickup";
+
+  // ---------- when we can cook, and how much ----------
+  //
+  // Indexed by JavaScript's getDay(): 0 = Sunday ... 6 = Saturday.
+  // Weekdays are an evening-only window because of the day job; weekends
+  // run all day at four times the volume.
+  //
+  // "cap" is portions per day, and it is deliberately never shown to
+  // customers as a number — they see "fully booked" or nothing at all.
+  // Knowing exactly how full a day is tells strangers more about the
+  // business than it helps them order.
+  const DAY_RULES = {
+    0: { start: "8:00 AM", end: "8:00 PM",  cap: 60 }, // Sunday
+    1: { start: "5:45 PM", end: "11:00 PM", cap: 15 }, // Monday
+    2: { start: "5:45 PM", end: "11:00 PM", cap: 15 },
+    3: { start: "5:45 PM", end: "11:00 PM", cap: 15 },
+    4: { start: "5:45 PM", end: "11:00 PM", cap: 15 },
+    5: { start: "5:45 PM", end: "11:00 PM", cap: 15 }, // Friday
+    6: { start: "8:00 AM", end: "8:00 PM",  cap: 60 }, // Saturday
+  };
+
+  // Highest cap of any day. The database rules use this as a ceiling on the
+  // shared counter, because a security rule can't work out which weekday a
+  // date string falls on. The exact per-day cap is applied here in the page.
+  const MAX_DAY_CAP = 60;
+
+  function minutesOf(label) {
+    const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(String(label).trim());
+    if (!m) return null;
+    let hh = Number(m[1]) % 12;
+    if (/PM/i.test(m[3])) hh += 12;
+    return hh * 60 + Number(m[2]);
+  }
+
+  function labelOf(mins) {
+    const h24 = Math.floor(mins / 60), mm = mins % 60;
+    const period = h24 >= 12 ? "PM" : "AM";
+    let hh = h24 % 12; if (hh === 0) hh = 12;
+    return `${hh}:${String(mm).padStart(2, "0")} ${period}`;
+  }
+
+  function rulesForDate(iso) {
+    const p = String(iso).split("-").map(Number);
+    if (p.length !== 3) return null;
+    const d = new Date(p[0], p[1] - 1, p[2]);
+    if (isNaN(d.getTime())) return null;
+    return DAY_RULES[d.getDay()] || null;
+  }
+
+  // The first slot is the window's exact start (5:45 PM on a weekday), then
+  // it snaps back onto the half hour. Without the snap a 5:45 start would
+  // give 6:15, 6:45, 7:15 — every later slot landing on a quarter past,
+  // which reads as arbitrary next to the weekend's clean 8:00, 8:30.
+  function slotsForDate(iso) {
+    const rules = rulesForDate(iso);
+    if (!rules) return [];
+    const start = minutesOf(rules.start), end = minutesOf(rules.end);
+    if (start == null || end == null) return [];
+    const out = [start];
+    let t = Math.ceil((start + 1) / 30) * 30;
+    for (; t <= end; t += 30) out.push(t);
+    return out.map(labelOf);
+  }
+
+  function portionsFor(items) {
+    return (items || []).reduce((sum, it) => {
+      const m = MENU.find(x => x.name === it.name);
+      return sum + (m ? m.portions : 0) * (Number(it.qty) || 0);
+    }, 0);
+  }
+
+  // ---------- how full a day already is ----------
+  //
+  // The page can't simply count the orders for a date: customers are not
+  // allowed to browse the orders collection, and that restriction is the
+  // whole reason a private edit link is safe to hand out. So each date keeps
+  // one small tally document holding nothing but a number. It leaks no names,
+  // no phone numbers and no order history, and it is the only thing about
+  // other people's orders a customer's browser can see.
+  //
+  // Because the tally is a separate document from the orders themselves, it
+  // can drift — an order deleted straight out of the database won't decrement
+  // it. The dashboard therefore shows the real count beside the tally and can
+  // correct it, rather than this being silently wrong.
+  function dayLoadRef(iso) {
+    return doc(db, "dayLoad", iso);
+  }
+
+  async function loadUsedPortions(iso) {
+    try {
+      const snap = await getDoc(dayLoadRef(iso));
+      return snap.exists() ? (Number(snap.data().portions) || 0) : 0;
+    } catch (e) {
+      // If the tally can't be read, let the order through rather than
+      // turning a transient network blip into a lost sale. The transaction
+      // at submit time is the real gate.
+      console.warn("Could not read day capacity:", e);
+      return null;
+    }
+  }
+
+  // Reserves capacity and writes the order in a single transaction, so two
+  // people ordering the last tray at the same moment can't both succeed.
+  // Throws "FULL" when the day can't take this order, which the caller turns
+  // into a message rather than an error.
+  async function bookWithCapacity(iso, needed, orderData) {
+    const rules = rulesForDate(iso);
+    const cap = rules ? rules.cap : MAX_DAY_CAP;
+    const orderRef = doc(collection(db, "onlineOrders"));
+    await runTransaction(db, async (tx) => {
+      const loadRef = dayLoadRef(iso);
+      const snap = await tx.get(loadRef);
+      const used = snap.exists() ? (Number(snap.data().portions) || 0) : 0;
+      if (used + needed > cap) throw new Error("FULL");
+      tx.set(orderRef, orderData);
+      tx.set(loadRef, { portions: used + needed }, { merge: true });
+    });
+    return orderRef;
+  }
+
+  // Applies a change in portions when a customer edits an order. A move to a
+  // different pickup day has to give capacity back to the old day as well as
+  // take it from the new one, or a customer rescheduling twice would quietly
+  // consume the whole week.
+  async function adjustCapacityForEdit(oldIso, oldPortions, newIso, newPortions, applyOrderWrite) {
+    const rules = rulesForDate(newIso);
+    const cap = rules ? rules.cap : MAX_DAY_CAP;
+    await runTransaction(db, async (tx) => {
+      const newRef = dayLoadRef(newIso);
+      const sameDay = oldIso === newIso;
+      const oldRef = sameDay ? null : dayLoadRef(oldIso);
+
+      // Every read must happen before every write inside a transaction.
+      const newSnap = await tx.get(newRef);
+      const oldSnap = oldRef ? await tx.get(oldRef) : null;
+
+      const newUsed = newSnap.exists() ? (Number(newSnap.data().portions) || 0) : 0;
+      const alreadyMine = sameDay ? oldPortions : 0;
+      if (newUsed - alreadyMine + newPortions > cap) throw new Error("FULL");
+
+      applyOrderWrite(tx);
+      tx.set(newRef, { portions: Math.max(0, newUsed - alreadyMine + newPortions) }, { merge: true });
+      if (oldRef) {
+        const oldUsed = oldSnap.exists() ? (Number(oldSnap.data().portions) || 0) : 0;
+        tx.set(oldRef, { portions: Math.max(0, oldUsed - oldPortions) }, { merge: true });
+      }
+    });
+  }
 
   // ---------- shared helpers ----------
 
@@ -496,29 +657,107 @@
     buildStepperRows("menuList", qty);
 
     const timeSelect = document.getElementById("pickupTime");
-    for (let h = 11; h <= 18; h++) {
-      for (const m of [0, 30]) {
-        if (h === 18 && m === 30) continue;
-        const period = h >= 12 ? "PM" : "AM";
-        let hh = h % 12; if (hh === 0) hh = 12;
-        const label = `${hh}:${m === 0 ? "00" : m} ${period}`;
-        const opt = document.createElement("option");
-        opt.value = label; opt.textContent = label;
-        timeSelect.appendChild(opt);
-      }
-    }
-
     const dateInput = document.getElementById("pickupDate");
     dateInput.min = isoLocal(new Date());
 
+    // Remembered per date so the capacity tally isn't re-fetched on every
+    // keystroke in the name field.
+    let dayState = { iso: null, used: null, cap: null, full: false };
+
+    function setDayNote(msg, tone) {
+      const el = document.getElementById("dayNote");
+      el.textContent = msg || "";
+      el.className = "hint" + (msg ? " day-note " + (tone || "") : " day-note");
+      el.hidden = !msg;
+    }
+
+    // Rebuilds the time dropdown for whichever day was chosen. Weekday
+    // evenings and weekend all-day are different windows, so the options a
+    // customer sees have to change with the date rather than being one fixed
+    // list that happens to be wrong five days a week.
+    function rebuildTimes(iso) {
+      const previous = timeSelect.value;
+      timeSelect.innerHTML = '<option value="" disabled selected>Choose a time</option>';
+      if (!iso) return;
+
+      let slots = slotsForDate(iso);
+
+      // Don't offer a pickup that has already happened. Ordering at 7pm for
+      // an 8am slot "today" is the kind of mistake that only surfaces the
+      // next morning when nobody collects it.
+      const now = new Date();
+      if (iso === isoLocal(now)) {
+        const cutoff = now.getHours() * 60 + now.getMinutes();
+        slots = slots.filter(s => minutesOf(s) > cutoff);
+      }
+
+      slots.forEach(label => {
+        const opt = document.createElement("option");
+        opt.value = label; opt.textContent = label;
+        timeSelect.appendChild(opt);
+      });
+      if (slots.includes(previous)) timeSelect.value = previous;
+      timeSelect.disabled = slots.length === 0;
+      return slots.length;
+    }
+
+    async function onDateChanged() {
+      const iso = dateInput.value;
+      const slotCount = rebuildTimes(iso);
+      dayState = { iso, used: null, cap: null, full: false };
+      if (!iso) { setDayNote(""); refresh(); return; }
+
+      if (slotCount === 0) {
+        setDayNote("No pickup times left for that day. Please choose another date.", "warn");
+        refresh();
+        return;
+      }
+
+      setDayNote("Checking availability…");
+      const rules = rulesForDate(iso);
+      const cap = rules ? rules.cap : MAX_DAY_CAP;
+      const used = await loadUsedPortions(iso);
+      if (dateInput.value !== iso) return; // they moved on while we waited
+
+      dayState = { iso, used, cap, full: used != null && used >= cap };
+      if (dayState.full) {
+        setDayNote("We're fully booked on that day. Please pick another date.", "warn");
+      } else {
+        const windowText = rules
+          ? `Pickup that day runs ${rules.start} to ${rules.end}.`
+          : "";
+        setDayNote(windowText);
+      }
+      refresh();
+    }
+
     function refresh() {
       document.getElementById("totalAmount").textContent = "$" + totalFrom(qty);
-      const ok = itemsFrom(qty).length > 0
+      const items = itemsFrom(qty);
+      const needed = portionsFor(items);
+
+      // Deliberately vague. The customer learns their order won't fit, not
+      // how many portions are left, which is business information.
+      let overCapacity = false;
+      if (!dayState.full && dayState.used != null && dayState.cap != null) {
+        overCapacity = dayState.used + needed > dayState.cap;
+        if (overCapacity) {
+          setDayNote("We don't have enough left that day for an order this size. Try another date, or a smaller order.", "warn");
+        } else if (document.getElementById("dayNote").classList.contains("warn")) {
+          const rules = rulesForDate(dayState.iso);
+          setDayNote(rules ? `Pickup that day runs ${rules.start} to ${rules.end}.` : "");
+        }
+      }
+
+      const ok = items.length > 0
         && document.getElementById("custName").value.trim()
         && document.getElementById("custContact").value.trim()
-        && dateInput.value && timeSelect.value;
+        && dateInput.value && timeSelect.value
+        && !dayState.full && !overCapacity;
       document.getElementById("submitBtn").disabled = !ok;
     }
+
+    dateInput.addEventListener("change", onDateChanged);
 
     document.getElementById("menuList").addEventListener("click", (e) => {
       const btn = e.target.closest("button[data-act]");
@@ -565,7 +804,12 @@
       submitBtn.disabled = true;
       submitBtn.textContent = "Placing order…";
 
-      const savePromise = addDoc(collection(db, "onlineOrders"), {
+      // Reserving capacity has to be confirmed by the server — unlike a plain
+      // write, it can come back "no". So this one is genuinely awaited rather
+      // than optimistically confirmed the way it used to be: telling someone
+      // their order is placed and then discovering the day was full would be
+      // worse than a couple of seconds of waiting.
+      const savePromise = bookWithCapacity(pickupDate, portionsFor(items), {
         name, handle, contact, items, total,
         pickupDate, pickupTime, pickupAt,
         orderDate: now.toISOString().slice(0, 10),
@@ -575,32 +819,38 @@
         submittedAt: serverTimestamp(),
       });
 
+      const raced = await Promise.race([
+        savePromise.then(() => "done", (err) => err),
+        new Promise(r => setTimeout(() => r("slow"), 2500)),
+      ]);
+
+      // On a slow connection, say so instead of leaving a dead button.
+      if (raced === "slow") submitBtn.textContent = "Still sending…";
+
+      let ref = null;
+      try {
+        ref = await savePromise;
+      } catch (err) {
+        const full = String(err && err.message) === "FULL";
+        showError(full
+          ? "That day just filled up while you were ordering. Please pick another date."
+          : "Something went wrong placing your order. Please try again, or message us on Instagram.");
+        submitBtn.disabled = false;
+        submitBtn.textContent = "Place order";
+        if (full) onDateChanged();
+        return;
+      }
+
       // The Sheet mirror takes about 4 seconds on its own (Apps Script is
       // slow to wake), so it is deliberately never awaited. A customer
-      // should never wait on bookkeeping.
+      // should never wait on bookkeeping. It fires only once the order is
+      // genuinely saved, so a rejected order never shows up in the Sheet.
       if (SHEET_WEBHOOK_URL) {
         fetch(SHEET_WEBHOOK_URL, {
           method: "POST", mode: "no-cors",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
           body: JSON.stringify({ name, handle, contact, items, total, pickupDate, pickupTime, notes }),
         }).catch(() => {});
-      }
-
-      // saved  = server confirmed (the normal case, a few hundred ms)
-      // failed = genuinely rejected, so say so and let them retry
-      // slow   = network being slow. Firestore has already committed locally
-      //          and keeps retrying, so confirm rather than show a spinner
-      //          that looks stuck.
-      const outcome = await Promise.race([
-        savePromise.then(() => "saved", () => "failed"),
-        new Promise(r => setTimeout(() => r("slow"), 2500)),
-      ]);
-
-      if (outcome === "failed") {
-        showError("Something went wrong placing your order. Please try again, or message us on Instagram.");
-        submitBtn.disabled = false;
-        submitBtn.textContent = "Place order";
-        return;
       }
 
       document.getElementById("confirmLead").textContent =
@@ -612,7 +862,7 @@
       document.getElementById("confirmScreen").classList.add("show");
       window.scrollTo({ top: 0, behavior: "smooth" });
 
-      savePromise.then((ref) => {
+      (function renderSavedOrder() {
         if (!ref || !ref.id) return;
         document.getElementById("confirmRef").textContent = ref.id.slice(-6).toUpperCase();
         document.getElementById("confirmRefLine").hidden = false;
@@ -652,17 +902,7 @@
           }
           setTimeout(() => { btn.textContent = "Copy link"; }, 2500);
         });
-      }).catch(() => {});
-
-      if (outcome === "slow") {
-        savePromise.catch(() => {
-          const warn = document.createElement("div");
-          warn.className = "error-box show";
-          warn.style.marginTop = "14px";
-          warn.textContent = "We couldn't confirm your order with our system. Please message us on Instagram so we don't miss it.";
-          document.getElementById("confirmSummary").appendChild(warn);
-        });
-      }
+      })();
     });
 
     refresh();
@@ -696,7 +936,6 @@
     document.getElementById("curPickupTime").textContent = original.pickupTime || "";
     document.getElementById("whoLine").textContent =
       `${original.name || ""} · order #${orderId.slice(-6).toUpperCase()}`;
-    document.getElementById("timeEcho").textContent = original.pickupTime || "";
     buildStepperRows("mMenuList", qty);
     document.getElementById("mPickupDate").value = original.pickupDate || "";
     document.getElementById("mNotes").value = original.notes || "";
@@ -708,18 +947,86 @@
 
     show("manageView");
 
+    const mDate = document.getElementById("mPickupDate");
+    const mTime = document.getElementById("mPickupTime");
+
+    function setMDayNote(msg, tone) {
+      const el = document.getElementById("mDayNote");
+      el.textContent = msg || "";
+      el.className = "hint day-note" + (tone ? " " + tone : "");
+      el.hidden = !msg;
+    }
+
+    // Moving a Saturday order to a Monday has to move the time too: 11:30 AM
+    // is a normal weekend slot and an impossible weekday one. Rebuilding the
+    // list from the new date's rules is what stops a reschedule producing a
+    // pickup time the kitchen isn't open for.
+    let mDayState = { iso: null, used: null, cap: null };
+
+    function rebuildManageTimes(iso, preferred) {
+      mTime.innerHTML = "";
+      const slots = slotsForDate(iso);
+      slots.forEach(label => {
+        const opt = document.createElement("option");
+        opt.value = label; opt.textContent = label;
+        mTime.appendChild(opt);
+      });
+      mTime.value = slots.includes(preferred) ? preferred : (slots[0] || "");
+      return slots;
+    }
+
+    async function onManageDateChanged() {
+      const iso = mDate.value;
+      const slots = rebuildManageTimes(iso, mTime.value || original.pickupTime);
+      mDayState = { iso, used: null, cap: null };
+      if (!iso) { setMDayNote(""); refresh(); return; }
+
+      const rules = rulesForDate(iso);
+      const movedDayType = iso !== original.pickupDate
+        && rulesForDate(original.pickupDate)
+        && rules && rulesForDate(original.pickupDate).start !== rules.start;
+
+      const used = await loadUsedPortions(iso);
+      if (mDate.value !== iso) return;
+      mDayState = { iso, used, cap: rules ? rules.cap : MAX_DAY_CAP };
+
+      if (used != null && rules && used >= rules.cap && iso !== original.pickupDate) {
+        setMDayNote("We're fully booked on that day. Please pick another date.", "warn");
+      } else if (movedDayType) {
+        setMDayNote(`Pickup on that day runs ${rules.start} to ${rules.end}, so please check the time above.`);
+      } else if (rules) {
+        setMDayNote(`Pickup that day runs ${rules.start} to ${rules.end}.`);
+      }
+      refresh();
+    }
+
     function changed() {
       const a = JSON.stringify(itemsFrom(qty));
       const b = JSON.stringify((original.items || []).map(i => ({ qty: i.qty, name: i.name, price: i.price })));
       return a !== b
-        || document.getElementById("mPickupDate").value !== original.pickupDate
+        || mDate.value !== original.pickupDate
+        || mTime.value !== original.pickupTime
         || document.getElementById("mNotes").value.trim() !== (original.notes || "");
     }
     function refresh() {
       document.getElementById("mTotalAmount").textContent = "$" + totalFrom(qty);
+
+      // How much of this day's capacity is already mine, so an edit that
+      // keeps the same day doesn't get charged twice for what it already has.
+      const mine = mDate.value === original.pickupDate ? portionsFor(original.items || []) : 0;
+      const need = portionsFor(itemsFrom(qty));
+      let over = false;
+      if (mDayState.used != null && mDayState.cap != null) {
+        over = mDayState.used - mine + need > mDayState.cap;
+        if (over) setMDayNote("We don't have enough left that day for an order this size. Try another date, or a smaller order.", "warn");
+      }
+
       document.getElementById("saveBtn").disabled =
-        !(itemsFrom(qty).length > 0 && document.getElementById("mPickupDate").value && changed());
+        !(itemsFrom(qty).length > 0 && mDate.value && mTime.value && changed() && !over);
     }
+
+    rebuildManageTimes(original.pickupDate, original.pickupTime);
+    onManageDateChanged();
 
     document.getElementById("mMenuList").addEventListener("click", (e) => {
       const btn = e.target.closest("button[data-act]");
@@ -730,9 +1037,10 @@
       refresh();
     });
     ["input", "change"].forEach(ev => {
-      document.getElementById("mPickupDate").addEventListener(ev, refresh);
       document.getElementById("mNotes").addEventListener(ev, refresh);
+      mTime.addEventListener(ev, refresh);
     });
+    mDate.addEventListener("change", onManageDateChanged);
 
     // An order stops being editable 24h before pickup. Saying that clearly,
     // with a way to reach a human, is the difference between "this is
@@ -762,8 +1070,9 @@
         errEl.classList.remove("hidden");
         return;
       }
-      const newDate = document.getElementById("mPickupDate").value;
-      const newPickupAt = pickupTimestamp(newDate, original.pickupTime);
+      const newDate = mDate.value;
+      const newTime = mTime.value;
+      const newPickupAt = pickupTimestamp(newDate, newTime);
       if (!newPickupAt) {
         errEl.textContent = "That pickup date didn't look right. Please pick it again.";
         errEl.classList.remove("hidden");
@@ -780,14 +1089,26 @@
       btn.textContent = "Saving…";
       const newNotes = document.getElementById("mNotes").value.trim();
       try {
-        await updateDoc(doc(db, "onlineOrders", orderId), {
-          items, total: totalFrom(qty),
-          pickupDate: newDate, pickupAt: newPickupAt, notes: newNotes,
-        });
+        // Changing an order changes what the kitchen owes that day, so the
+        // day tally has to move with it — including giving the old day its
+        // capacity back when someone reschedules.
+        await adjustCapacityForEdit(
+          original.pickupDate,
+          portionsFor(original.items || []),
+          newDate,
+          portionsFor(items),
+          (tx) => tx.update(doc(db, "onlineOrders", orderId), {
+            items, total: totalFrom(qty),
+            pickupDate: newDate, pickupTime: newTime,
+            pickupAt: newPickupAt, notes: newNotes,
+          })
+        );
         original = Object.assign({}, original, {
-          items, total: totalFrom(qty), pickupDate: newDate, notes: newNotes,
+          items, total: totalFrom(qty), pickupDate: newDate,
+          pickupTime: newTime, notes: newNotes,
         });
         document.getElementById("curPickupDay").textContent = friendlyDate(newDate);
+        document.getElementById("curPickupTime").textContent = newTime;
 
         // Same treatment a new order gets, because "did my change actually
         // save?" is exactly as anxious a question as "did my order go
@@ -795,7 +1116,7 @@
         document.getElementById("editedLead").textContent =
           `Thanks ${String(original.name || "").split(" ")[0]}, your changes are saved. This is your order now.`;
         document.getElementById("editedPickupDay").textContent = friendlyDate(newDate);
-        document.getElementById("editedPickupTime").textContent = original.pickupTime || "";
+        document.getElementById("editedPickupTime").textContent = newTime;
         document.getElementById("editedSummary").innerHTML = summaryHtml(items, totalFrom(qty));
         document.getElementById("editedRef").textContent = orderId.slice(-6).toUpperCase();
         show("editedScreen");
@@ -805,8 +1126,13 @@
         return;
       } catch (e) {
         console.error("Save failed:", e);
-        errEl.innerHTML = "We couldn't save that change. It may be too close to pickup now. " +
-          "Message us on Instagram <strong>@ricenshine.sushibake</strong>.";
+        if (String(e && e.message) === "FULL") {
+          errEl.textContent = "That day just filled up. Please pick another date.";
+          onManageDateChanged();
+        } else {
+          errEl.innerHTML = "We couldn't save that change. It may be too close to pickup now. " +
+            "Message us on Instagram <strong>@ricenshine.sushibake</strong>.";
+        }
         errEl.classList.remove("hidden");
       }
       btn.textContent = "Save changes";
