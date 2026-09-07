@@ -489,8 +489,12 @@
   // overnight would strand people with no way back into their own order.
   // Anything placed after it has to be claimed by the address on the order.
   //
+  // Set to the day this shipped, not a day later. A cutover in the future
+  // would leave every order placed in the gap permanently link-only —
+  // the gate would be live but guarding nothing for those customers.
+  //
   // Must match the date in the Firestore rules (isUnclaimedLegacyLinkEdit).
-  const LINK_ONLY_CUTOVER = Date.UTC(2026, 8, 8); // 8 = September
+  const LINK_ONLY_CUTOVER = Date.UTC(2026, 8, 7); // 8 = September, so Sept 7
 
   let currentUser = null;
   const authReady = new Promise((resolve) => {
