@@ -1,3 +1,5 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Order — Rice & Shine</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -83,6 +85,13 @@
   input:focus, textarea:focus, select:focus { outline:2px solid var(--tea); outline-offset:1px; }
   textarea { resize:vertical; min-height:60px; }
   .hint { font-size:12px; color: var(--ink-soft); margin-top:5px; }
+  /* A button that reads as part of the sentence around it, for the
+     "send it again" affordance that shouldn't compete with Save. */
+  .linkish {
+    background:none; border:0; padding:0; font:inherit; color:var(--tea);
+    text-decoration:underline; cursor:pointer;
+  }
+  .linkish:hover { opacity:.75; }
 
   .total-row { display:flex; justify-content:space-between; align-items:baseline;
     padding-top:12px; margin-top:6px; border-top:2px solid var(--nori); }
@@ -304,6 +313,40 @@
       <textarea id="mNotes" maxlength="300"></textarea>
     </div>
 
+    <!-- Shown instead of the Save card when we need to know it's really them.
+         It appears only at the moment it's needed — after they've already
+         seen their order and made a change — rather than as a gate in front
+         of everything. -->
+    <div class="card hidden" id="verifyCard">
+      <h2>Just checking it's you</h2>
+      <p class="hint" style="margin:0 0 14px" id="verifyLead">
+        To change this order we'll email you a sign-in link. One click and
+        you're back here — we'll remember you on this device after that.
+      </p>
+      <div class="notice warn hidden" id="verifyError" style="margin-bottom:12px"></div>
+      <button type="button" class="primary" id="verifySendBtn">Email me a sign-in link</button>
+      <div class="hint" style="margin-top:12px">
+        Can't get to that inbox? Message us on Instagram
+        <strong>@ricenshine.sushibake</strong> and we'll make the change for you.
+      </div>
+    </div>
+
+    <!-- The "now go look at your email" moment. Worth its own panel: the
+         most common way this flow fails is a customer not realising they
+         have to leave the page at all. -->
+    <div class="card hidden" id="verifySentCard">
+      <h2>Check your email</h2>
+      <p class="hint" style="margin:0 0 14px">
+        We've sent a sign-in link to <strong id="verifySentTo"></strong>.
+        Open it on this device and you'll come straight back to this order,
+        with your changes still here.
+      </p>
+      <div class="hint">
+        Nothing arrived after a minute or two? Check spam, then
+        <button type="button" class="linkish" id="verifyResendBtn">send it again</button>.
+      </div>
+    </div>
+
     <div class="card" id="saveCard">
       <div class="notice info" style="margin-bottom:12px">
         Changes are allowed up until 24 hours before pickup.
@@ -365,6 +408,10 @@
   import {
     initializeAppCheck, ReCaptchaEnterpriseProvider,
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app-check.js";
+  import {
+    getAuth, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
+    onAuthStateChanged, setPersistence, browserLocalPersistence, signOut,
+  } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 
   // Public client config. Safe to expose: Firestore security rules, not this,
   // decide who can read or write what.
@@ -404,6 +451,155 @@
   const SHEET_WEBHOOK_URL = "https://script.google.com/macros/s/AKfycbyhgR25wpULYLhiKe-BAIKL81-kR53XNLRQjCeqalZ_lXV0fOFIEEv2A2XdssPQMK8Y/exec";
 
   const EDIT_LOCK_HOURS = 24;
+
+  // ---------- proving who you are ----------
+  //
+  // Placing an order asks for nothing but the form. Changing one afterwards
+  // asks the customer to click a link we email them, once, and then remembers
+  // them on that device.
+  //
+  // The reason it sits here and not on the order form is that this is the
+  // only place it protects anything. Requiring sign-in to *buy* would cost
+  // real orders — a customer who has to leave the page, find an email and
+  // come back is a customer who might not — while protecting nothing that
+  // App Check doesn't already cover. Requiring it to *edit someone's order*
+  // protects the actual thing worth protecting.
+  //
+  // Once signed in, Firebase keeps the session in this browser, so a
+  // returning customer never sees any of this again: their next order is
+  // stamped with their account as it's created, and their next edit just
+  // saves.
+  const auth = getAuth(app);
+  setPersistence(auth, browserLocalPersistence).catch(() => {});
+
+  const PENDING_EMAIL_KEY = "riceShineSignInEmail";
+  const PENDING_DRAFT_KEY = "riceShineDraft";
+
+  // Staff can edit any order from here, the same as from the dashboard, once
+  // they've signed in on this site. Kept in step with the same list in the
+  // Firestore rules — the rules are what actually enforce it; this only
+  // decides whether the page bothers asking.
+  const STAFF_EMAILS = [
+    "htran42595@gmail.com", "vytrinh1308@gmail.com", "253boutique@gmail.com",
+  ];
+
+  // Orders placed before this moment keep working the way they always have:
+  // whoever holds the link can edit them. Customers are walking around with
+  // those links already, in emails and screenshots, and invalidating them
+  // overnight would strand people with no way back into their own order.
+  // Anything placed after it has to be claimed by the address on the order.
+  //
+  // Must match the date in the Firestore rules (isUnclaimedLegacyLinkEdit).
+  const LINK_ONLY_CUTOVER = Date.UTC(2026, 8, 8); // 8 = September
+
+  let currentUser = null;
+  const authReady = new Promise((resolve) => {
+    let settled = false;
+    onAuthStateChanged(auth, (u) => {
+      currentUser = u || null;
+      if (!settled) { settled = true; resolve(currentUser); }
+      document.body.dataset.signedIn = currentUser ? "yes" : "no";
+    });
+    // Auth is a nice-to-have on the order form, so never let a slow or
+    // blocked auth endpoint hold the page hostage.
+    setTimeout(() => { if (!settled) { settled = true; resolve(null); } }, 6000);
+  });
+
+  function signedInEmail() {
+    return currentUser && currentUser.email ? currentUser.email.toLowerCase() : null;
+  }
+  function isStaff() {
+    return !!signedInEmail() && STAFF_EMAILS.includes(signedInEmail());
+  }
+
+  // Does this order still accept the old "the link is the password" edit?
+  function isLegacyLinkOrder(o) {
+    const t = o && o.submittedAt && o.submittedAt.toDate
+      ? o.submittedAt.toDate().getTime()
+      : 0;
+    return t > 0 && t < LINK_ONLY_CUTOVER;
+  }
+
+  // The same decision the Firestore rules make, made here first so the page
+  // can ask for a sign-in instead of letting a save fail with a permission
+  // error the customer can't act on.
+  function canEditOrder(o) {
+    if (isStaff()) return true;
+    if (o && o.ownerUid) return !!currentUser && currentUser.uid === o.ownerUid;
+    return isLegacyLinkOrder(o);
+  }
+
+  // Where the emailed link brings them back to. Keeping the full current URL
+  // means a customer who was editing order X lands back on order X, already
+  // signed in, instead of on a generic homepage having lost their place.
+  function signInRedirectUrl() {
+    return window.location.href;
+  }
+
+  async function sendSignInLink(email) {
+    try { localStorage.setItem(PENDING_EMAIL_KEY, email); } catch (e) {}
+    await sendSignInLinkToEmail(auth, email, {
+      url: signInRedirectUrl(),
+      handleCodeInApp: true,
+    });
+  }
+
+  // Called once on load. If this page was opened from a sign-in email, finish
+  // the sign-in and then clean the one-time code out of the address bar, so a
+  // refresh or a shared URL doesn't try to reuse a spent link.
+  async function completeSignInIfReturning() {
+    if (!isSignInWithEmailLink(auth, window.location.href)) return null;
+
+    let email = null;
+    try { email = localStorage.getItem(PENDING_EMAIL_KEY); } catch (e) {}
+
+    // Opening the link on a different device than the one that asked for it
+    // is normal — request on a laptop, tap it on a phone. Firebase needs the
+    // address again in that case, and asking for it is safe: the link itself
+    // is the proof, the address alone opens nothing.
+    if (!email) {
+      email = window.prompt("Please confirm the email address you ordered with:");
+      if (!email) return null;
+      email = email.trim().toLowerCase();
+    }
+
+    try {
+      const cred = await signInWithEmailLink(auth, email, window.location.href);
+      currentUser = cred.user;
+      try { localStorage.removeItem(PENDING_EMAIL_KEY); } catch (e) {}
+      return cred.user;
+    } catch (e) {
+      console.warn("Sign-in link failed:", e);
+      return null;
+    } finally {
+      // Strip the sign-in parameters but keep ?order=<id>, so the page
+      // reloads as a plain order link from here on.
+      const url = new URL(window.location.href);
+      ["apiKey", "oobCode", "mode", "lang", "continueUrl", "tenantId"]
+        .forEach(k => url.searchParams.delete(k));
+      window.history.replaceState({}, "", url.toString());
+    }
+  }
+
+  // A half-finished order should survive the round trip through an inbox.
+  // Nothing here is sensitive — it's the same data the customer just typed
+  // into a form on their own screen — and it lives only in their browser.
+  function saveDraft(draft) {
+    try {
+      localStorage.setItem(PENDING_DRAFT_KEY, JSON.stringify({ ...draft, savedAt: Date.now() }));
+    } catch (e) {}
+  }
+  function takeDraft() {
+    try {
+      const raw = localStorage.getItem(PENDING_DRAFT_KEY);
+      if (!raw) return null;
+      localStorage.removeItem(PENDING_DRAFT_KEY);
+      const d = JSON.parse(raw);
+      // A week-old draft is a stale surprise, not a convenience.
+      if (!d || Date.now() - (d.savedAt || 0) > 7 * 24 * 3600 * 1000) return null;
+      return d;
+    } catch (e) { return null; }
+  }
 
   // One menu for both the order form and the edit screen. These used to be
   // two separate files with two copies of this list, which meant a price
@@ -488,6 +684,18 @@
   // would make the confirmation undeliverable, like a missing @ or a
   // trailing comma. Anything stricter starts rejecting real addresses, and
   // the actual proof that an address works is the verification email.
+  // Shows enough of the address for the customer to recognise which inbox to
+  // open, without printing a full address on a screen anyone holding the link
+  // can load. "anna.tran@gmail.com" becomes "an•••@gmail.com".
+  function maskEmail(addr) {
+    const s = String(addr || "");
+    const at = s.indexOf("@");
+    if (at < 1) return s;
+    const local = s.slice(0, at), domain = s.slice(at);
+    const keep = local.length <= 2 ? 1 : 2;
+    return local.slice(0, keep) + "•••" + domain;
+  }
+
   function looksLikeEmail(v) {
     const s = String(v || "").trim();
     return s.length >= 5 && s.length <= 120 && /^[^\s@,]+@[^\s@,]+\.[^\s@,]{2,}$/.test(s);
@@ -834,7 +1042,18 @@
       // than optimistically confirmed the way it used to be: telling someone
       // their order is placed and then discovering the day was full would be
       // worse than a couple of seconds of waiting.
-      const savePromise = bookWithCapacity(pickupDate, portionsFor(items), {
+      // A customer who already signed in on this device — because they
+      // ordered before and edited something — gets their order stamped with
+      // their account as it's created. That order is protected from the
+      // start: the link alone will never edit it. Everyone else's order is
+      // created unclaimed and gets adopted the first time they sign in to
+      // change it.
+      //
+      // The uid is only attached when the signed-in address actually matches
+      // what they typed. Someone still signed in as a previous customer on a
+      // shared phone must not have that stranger's account welded onto this
+      // order — that would lock the real customer out of their own order.
+      const orderPayload = {
         name, handle, email, contact, items, total,
         pickupDate, pickupTime, pickupAt,
         orderDate: now.toISOString().slice(0, 10),
@@ -842,7 +1061,12 @@
         paid: false, payMethod: PAY_METHOD,
         notes, source: "website",
         submittedAt: serverTimestamp(),
-      });
+      };
+      if (signedInEmail() && signedInEmail() === email) {
+        orderPayload.ownerUid = currentUser.uid;
+      }
+
+      const savePromise = bookWithCapacity(pickupDate, portionsFor(items), orderPayload);
 
       const raced = await Promise.race([
         savePromise.then(() => "done", (err) => err),
@@ -950,6 +1174,23 @@
     if (!snap.exists()) { show("notFoundState"); return; }
 
     let original = snap.data();
+
+    // If they've just come back from a sign-in link (or signed in earlier on
+    // this device) and this order is theirs but not yet attached to their
+    // account, adopt it now. Doing it here — before anything is edited —
+    // means the claim is its own small write that can't fail halfway through
+    // a change, and from this point the order is theirs alone.
+    if (currentUser && !original.ownerUid && !isStaff()
+        && signedInEmail() && signedInEmail() === String(original.email || "").toLowerCase()) {
+      try {
+        await updateDoc(doc(db, "onlineOrders", orderId), { ownerUid: currentUser.uid });
+        original = Object.assign({}, original, { ownerUid: currentUser.uid });
+      } catch (e) {
+        // Not fatal — they simply stay on whichever path they were on.
+        console.warn("Could not attach this order to your account:", e);
+      }
+    }
+
     const qty = {};
     MENU.forEach(m => qty[m.id] = 0);
     (original.items || []).forEach(it => {
@@ -1053,6 +1294,102 @@
     rebuildManageTimes(original.pickupDate, original.pickupTime);
     onManageDateChanged();
 
+    // ---------- sign-in gate ----------
+    //
+    // The Save card and the verify card are alternatives, never both. Which
+    // one shows is decided by exactly the question the database will ask when
+    // the save actually happens, so the customer is never offered a button
+    // that is going to be refused.
+    const needsSignIn = !canEditOrder(original);
+
+    function showSaveOrVerify(state) {
+      document.getElementById("saveCard").classList.toggle("hidden", state !== "save");
+      document.getElementById("verifyCard").classList.toggle("hidden", state !== "verify");
+      document.getElementById("verifySentCard").classList.toggle("hidden", state !== "sent");
+    }
+
+    if (needsSignIn) {
+      const addr = String(original.email || "").toLowerCase();
+      showSaveOrVerify("verify");
+      document.getElementById("verifyLead").innerHTML = addr
+        ? `Make your changes above, then we'll email a sign-in link to ` +
+          `<strong>${maskEmail(addr)}</strong>. One click brings you back here ` +
+          `with your changes still in place, and we'll remember you on this ` +
+          `device from then on.`
+        : `This order has no email address on it, so we can't verify it here. ` +
+          `Message us on Instagram <strong>@ricenshine.sushibake</strong> and ` +
+          `we'll make the change for you.`;
+      document.getElementById("verifySendBtn").disabled = !addr;
+    } else {
+      showSaveOrVerify("save");
+    }
+
+    // Everything the customer had typed, so a trip through their inbox
+    // doesn't cost them the change they were making.
+    function currentDraft() {
+      return {
+        orderId,
+        qty: Object.assign({}, qty),
+        pickupDate: mDate.value,
+        pickupTime: mTime.value,
+        notes: document.getElementById("mNotes").value,
+      };
+    }
+
+    async function requestSignInLink() {
+      const btn = document.getElementById("verifySendBtn");
+      const errEl = document.getElementById("verifyError");
+      const addr = String(original.email || "").toLowerCase();
+      if (!addr) return;
+
+      errEl.classList.add("hidden");
+      btn.disabled = true;
+      btn.textContent = "Sending…";
+      saveDraft(currentDraft());
+      try {
+        await sendSignInLink(addr);
+        document.getElementById("verifySentTo").textContent = maskEmail(addr);
+        showSaveOrVerify("sent");
+      } catch (e) {
+        console.error("Could not send sign-in link:", e);
+        errEl.innerHTML = "We couldn't send that link just now. Please try again, " +
+          "or message us on Instagram <strong>@ricenshine.sushibake</strong>.";
+        errEl.classList.remove("hidden");
+        btn.disabled = false;
+      }
+      btn.textContent = "Email me a sign-in link";
+    }
+
+    document.getElementById("verifySendBtn").addEventListener("click", requestSignInLink);
+    document.getElementById("verifyResendBtn").addEventListener("click", () => {
+      showSaveOrVerify("verify");
+      requestSignInLink();
+    });
+
+    // Coming back from the inbox: put their half-made change back exactly
+    // where they left it, so signing in feels like a pause rather than a
+    // restart.
+    (function restorePendingEdit() {
+      const draft = takeDraft();
+      if (!draft || draft.orderId !== orderId) return;
+      Object.keys(draft.qty || {}).forEach(id => {
+        if (id in qty) {
+          qty[id] = Number(draft.qty[id]) || 0;
+          const c = document.getElementById("mMenuList-count-" + id);
+          if (c) c.textContent = qty[id];
+        }
+      });
+      if (draft.pickupDate) mDate.value = draft.pickupDate;
+      if (typeof draft.notes === "string") document.getElementById("mNotes").value = draft.notes;
+      onManageDateChanged().then(() => {
+        if (draft.pickupTime) {
+          const opt = [...mTime.options].find(o => o.value === draft.pickupTime);
+          if (opt) mTime.value = draft.pickupTime;
+        }
+        refresh();
+      });
+    })();
+
     document.getElementById("mMenuList").addEventListener("click", (e) => {
       const btn = e.target.closest("button[data-act]");
       if (!btn) return;
@@ -1079,8 +1416,8 @@
       document.getElementById("lockedText").innerHTML =
         `This order is too close to pickup to change online (we lock changes ${EDIT_LOCK_HOURS} hours before, so we can shop and prep for it). ` +
         `Message us on Instagram <strong>@ricenshine.sushibake</strong> and we'll do what we can.`;
-      ["itemsCard", "detailsCard", "saveCard"].forEach(id =>
-        document.getElementById(id).classList.add("hidden"));
+      ["itemsCard", "detailsCard", "saveCard", "verifyCard", "verifySentCard"]
+        .forEach(id => document.getElementById(id).classList.add("hidden"));
       return;
     }
 
@@ -1154,6 +1491,12 @@
         if (String(e && e.message) === "FULL") {
           errEl.textContent = "That day just filled up. Please pick another date.";
           onManageDateChanged();
+        } else if (String(e && e.code) === "permission-denied" && !canEditOrder(original)) {
+          // The gate above should have caught this, so reaching here means
+          // the session lapsed mid-edit. Offer the way forward rather than a
+          // dead end.
+          showSaveOrVerify("verify");
+          errEl.textContent = "";
         } else {
           errEl.innerHTML = "We couldn't save that change. It may be too close to pickup now. " +
             "Message us on Instagram <strong>@ricenshine.sushibake</strong>.";
@@ -1181,7 +1524,19 @@
   // One file serves both screens: no ?order= means a new order, ?order=<id>
   // means "open my order". Nothing to keep in the same folder, nothing that
   // can 404.
-  const orderId = new URLSearchParams(window.location.search).get("order");
-  if (orderId) initManageView(orderId);
-  else initOrderForm();
+  //
+  // Sign-in is settled before either screen is built. The emailed link comes
+  // back to this same URL carrying a one-time code, so this has to run first
+  // and clean the code out of the address bar; reading ?order= afterwards
+  // then gets the tidied URL. Neither screen has to know any of that
+  // happened — by the time they run, the customer either is or isn't signed
+  // in, and nothing about the page flickers between the two.
+  (async function route() {
+    try { await completeSignInIfReturning(); } catch (e) { console.warn(e); }
+    try { await authReady; } catch (e) {}
+
+    const orderId = new URLSearchParams(window.location.search).get("order");
+    if (orderId) initManageView(orderId);
+    else initOrderForm();
+  })();
 </script>
