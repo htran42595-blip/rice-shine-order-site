@@ -412,6 +412,9 @@
     getAuth, sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink,
     onAuthStateChanged, setPersistence, browserLocalPersistence, signOut,
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+  import {
+    getFunctions, httpsCallable,
+  } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-functions.js";
 
   // Public client config. Safe to expose: Firestore security rules, not this,
   // decide who can read or write what.
@@ -540,12 +543,34 @@
     return window.location.href;
   }
 
+  // Sent by our own Cloud Function rather than by Firebase directly.
+  //
+  // Firebase's one-liner works, but the message it sends can't be changed —
+  // the console has templates for password reset, email change and
+  // verification, and none for passwordless sign-in. So the mail would arrive
+  // from noreply@rice-shine-order-board.firebaseapp.com in Firebase's own
+  // wording, looking nothing like the confirmation the customer got an hour
+  // before. That reads like phishing, which is the worst possible feeling to
+  // attach to a link you're asking someone to click.
+  //
+  // The function generates the identical Firebase link and mails it through
+  // Resend with the same template as everything else, so the code below that
+  // completes the sign-in is unchanged.
   async function sendSignInLink(email) {
     try { localStorage.setItem(PENDING_EMAIL_KEY, email); } catch (e) {}
-    await sendSignInLinkToEmail(auth, email, {
-      url: signInRedirectUrl(),
-      handleCodeInApp: true,
-    });
+    try {
+      const call = httpsCallable(getFunctions(app, "us-west1"), "sendSignInEmail");
+      await call({ email, continueUrl: signInRedirectUrl() });
+    } catch (e) {
+      // If the function is down or not deployed yet, fall back to Firebase's
+      // own email. A plain-looking sign-in email is a much smaller problem
+      // than a customer who can't get into their order at all.
+      console.warn("Branded sign-in email failed, falling back to Firebase:", e);
+      await sendSignInLinkToEmail(auth, email, {
+        url: signInRedirectUrl(),
+        handleCodeInApp: true,
+      });
+    }
   }
 
   // Called once on load. If this page was opened from a sign-in email, finish
@@ -688,6 +713,14 @@
   // would make the confirmation undeliverable, like a missing @ or a
   // trailing comma. Anything stricter starts rejecting real addresses, and
   // the actual proof that an address works is the verification email.
+  // The decline reason is typed by staff and dropped into innerHTML, so it
+  // gets escaped like any other text that didn't come from this file.
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+  }
+
   // Shows enough of the address for the customer to recognise which inbox to
   // open, without printing a full address on a screen anyone holding the link
   // can load. "anna.tran@gmail.com" becomes "an•••@gmail.com".
@@ -1407,6 +1440,22 @@
       mTime.addEventListener(ev, refresh);
     });
     mDate.addEventListener("change", onManageDateChanged);
+
+    // An order Tony has turned down isn't an order any more. Showing it with
+    // working steppers and a Save button would invite someone to carefully
+    // adjust something that is never going to be made.
+    if (original.status === "declined") {
+      document.getElementById("lockedNotice").classList.remove("hidden");
+      document.getElementById("lockedText").innerHTML =
+        `We're sorry — we couldn't take this order.` +
+        (original.statusNote ? ` ${escapeHtml(original.statusNote)}` : "") +
+        ` Nothing is owed. If you'd like to try another day, you can ` +
+        `<a href="${window.location.href.split("?")[0]}">place a new order</a>, ` +
+        `or message us on Instagram <strong>@ricenshine.sushibake</strong>.`;
+      ["itemsCard", "detailsCard", "saveCard", "verifyCard", "verifySentCard"]
+        .forEach(id => document.getElementById(id).classList.add("hidden"));
+      return;
+    }
 
     // An order stops being editable 24h before pickup. Saying that clearly,
     // with a way to reach a human, is the difference between "this is
