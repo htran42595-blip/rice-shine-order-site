@@ -1940,6 +1940,16 @@ footer.site button:hover { color: var(--tea); }
     return doc(db, "dayLoad", iso);
   }
 
+  // A single counter document gives every website order a short, sequential
+  // "Rn" reference — R1, R2, R3… — so a customer can read it out over Venmo
+  // instead of a random ID. It resets to R1 at the first website order of a
+  // new calendar year. Only orders placed through bookWithCapacity() touch
+  // this (source: "website"), so Instagram DM orders logged by hand never
+  // consume a number.
+  function orderCounterRef() {
+    return doc(db, "counters", "orderRef");
+  }
+
   async function loadUsedPortions(iso) {
     try {
       const snap = await getDoc(dayLoadRef(iso));
@@ -1961,13 +1971,26 @@ footer.site button:hover { color: var(--tea); }
     const rules = rulesForDate(iso);
     const cap = rules ? rules.cap : MAX_DAY_CAP;
     const orderRef = doc(collection(db, "onlineOrders"));
+    const counterRef = orderCounterRef();
     await runTransaction(db, async (tx) => {
+      // All reads before any writes — Firestore transaction rule.
       const loadRef = dayLoadRef(iso);
       const snap = await tx.get(loadRef);
+      const counterSnap = await tx.get(counterRef);
+
       const used = snap.exists() ? (Number(snap.data().portions) || 0) : 0;
       if (used + needed > cap) throw new Error("FULL");
+
+      const thisYear = new Date().getFullYear();
+      const counterData = counterSnap.exists() ? counterSnap.data() : null;
+      const nextNum = (counterData && Number(counterData.year) === thisYear)
+        ? (Number(counterData.count) || 0) + 1
+        : 1;
+      orderData.refCode = "R" + nextNum;
+
       tx.set(orderRef, orderData);
       tx.set(loadRef, { portions: used + needed }, { merge: true });
+      tx.set(counterRef, { year: thisYear, count: nextNum });
     });
     return orderRef;
   }
@@ -2389,7 +2412,7 @@ footer.site button:hover { color: var(--tea); }
         fetch(SHEET_WEBHOOK_URL, {
           method: "POST", mode: "no-cors",
           headers: { "Content-Type": "text/plain;charset=utf-8" },
-          body: JSON.stringify({ name, handle, email, contact, items, total, pickupDate, pickupTime, notes }),
+          body: JSON.stringify({ name, handle, email, contact, items, total, pickupDate, pickupTime, notes, refCode: orderPayload.refCode }),
         }).catch(() => {});
       }
 
@@ -2404,7 +2427,8 @@ footer.site button:hover { color: var(--tea); }
 
       (function renderSavedOrder() {
         if (!ref || !ref.id) return;
-        document.getElementById("confirmRef").textContent = ref.id.slice(-6).toUpperCase();
+        document.getElementById("confirmRef").textContent =
+          orderPayload.refCode || ref.id.slice(-6).toUpperCase();
         document.getElementById("confirmRefLine").hidden = false;
 
         // Same page, just with the order id attached. Keeping this in one
@@ -2512,7 +2536,7 @@ footer.site button:hover { color: var(--tea); }
     document.getElementById("curPickupDay").textContent = friendlyDate(original.pickupDate);
     document.getElementById("curPickupTime").textContent = original.pickupTime || "";
     document.getElementById("whoLine").textContent =
-      `${original.name || ""} · order #${orderId.slice(-6).toUpperCase()}`;
+      `${original.name || ""} · order #${original.refCode || orderId.slice(-6).toUpperCase()}`;
     renderSavedItems();
     document.getElementById("mPickupDate").value = original.pickupDate || "";
     document.getElementById("mNotes").value = original.notes || "";
@@ -2788,7 +2812,8 @@ footer.site button:hover { color: var(--tea); }
         document.getElementById("editedPickupDay").textContent = friendlyDate(newDate);
         document.getElementById("editedPickupTime").textContent = newTime;
         document.getElementById("editedSummary").innerHTML = summaryHtml(items, savedTotal);
-        document.getElementById("editedRef").textContent = orderId.slice(-6).toUpperCase();
+        document.getElementById("editedRef").textContent =
+          original.refCode || orderId.slice(-6).toUpperCase();
         show("editedScreen");
         document.getElementById("editedScreen").classList.add("show");
         window.scrollTo({ top: 0, behavior: "smooth" });
