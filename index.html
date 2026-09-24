@@ -99,6 +99,16 @@ header.top .tagline {
   }
 }
 
+/* Site-wide announcement banner. Lives outside the page-router's
+   main.page elements (right after header.top) so it shows no matter
+   which page a visitor lands on, editable from /backend. */
+.site-banner {
+  background: var(--salmon); color: #fff;
+  padding: 10px 16px; text-align: center;
+  font-size: 14px; font-weight: 700; line-height: 1.4;
+}
+.site-banner .wrap { max-width: 720px; margin: 0 auto; }
+
 .page-head { padding: 40px 0 30px; border-bottom: 1px solid var(--hairline); }
 .page-head .eyebrow::before { background: var(--salmon); }
 .page-head .lede { color: var(--ink-soft); font-size: 17px; margin: 12px 0 0; max-width: 52ch; }
@@ -875,6 +885,8 @@ footer.site button:hover { color: var(--tea); }
   </div>
 </header>
 
+<div id="siteBanner" class="site-banner" hidden><div class="wrap" id="siteBannerText"></div></div>
+
 <!-- ==================== HOME ==================== -->
 <main class="page" id="page-home">
   <section class="hero">
@@ -1020,8 +1032,8 @@ footer.site button:hover { color: var(--tea); }
       <div class="tbl-scroll">
         <table>
           <tr><th>Day</th><th>Pickup window</th></tr>
-          <tr><td>Monday &ndash; Friday</td><td class="num">5:45 PM &ndash; 11:00 PM</td></tr>
-          <tr><td>Saturday</td><td class="num">8:00 AM &ndash; 8:00 PM</td></tr>
+          <tr><td>Monday &ndash; Friday</td><td class="num" data-hours="weekday">5:45 PM &ndash; 11:00 PM</td></tr>
+          <tr><td>Saturday</td><td class="num" data-hours="sat">8:00 AM &ndash; 8:00 PM</td></tr>
           <tr><td>Sunday</td><td class="num">Upon request &mdash; please reach out to us</td></tr>
         </table>
       </div>
@@ -1051,7 +1063,7 @@ footer.site button:hover { color: var(--tea); }
         <li><div><h4>Pick your trays and drinks</h4>
           <p>Add as many as you like, then set the mayo, spicy mayo, sriracha, unagi sauce,
           chive, cucumber and nori on each tray &mdash; and the ice on each drink &mdash; separately.
-          All free except extra cucumber and extra nori, $1 each.</p></div></li>
+          <span id="extrasPriceNote">All free except extra cucumber and extra nori, $1 each.</span></p></div></li>
         <li><div><h4>Choose a pickup day and time</h4>
           <p>Fully booked days can't be picked. Times are only the ones inside that day's window.</p></div></li>
         <li><div><h4>Leave your name, email and phone</h4>
@@ -1129,8 +1141,8 @@ footer.site button:hover { color: var(--tea); }
       <div class="tbl-scroll">
         <table>
           <tr><th>Day</th><th>Window</th></tr>
-          <tr><td>Monday &ndash; Friday</td><td class="num">5:45 PM &ndash; 11:00 PM</td></tr>
-          <tr><td>Saturday</td><td class="num">8:00 AM &ndash; 8:00 PM</td></tr>
+          <tr><td>Monday &ndash; Friday</td><td class="num" data-hours="weekday">5:45 PM &ndash; 11:00 PM</td></tr>
+          <tr><td>Saturday</td><td class="num" data-hours="sat">8:00 AM &ndash; 8:00 PM</td></tr>
           <tr><td>Sunday</td><td class="num">Upon request &mdash; please reach out to us</td></tr>
         </table>
       </div>
@@ -2007,6 +2019,87 @@ footer.site button:hover { color: var(--tea); }
   // shared counter, because a security rule can't work out which weekday a
   // date string falls on. The exact per-day cap is applied here in the page.
   const MAX_DAY_CAP = 60;
+
+  // ---------- live site config, editable from /backend ----------
+  //
+  // Prices, pickup hours/caps, and the announcement banner all live in one
+  // Firestore doc (siteConfig/live) so Tony can change them without a
+  // deploy. This overwrites the built-in constants above in place (not by
+  // reassigning MENU/UPCHARGE/DAY_RULES) so every closure that already
+  // captured those objects picks up the new values automatically. Every
+  // field is validated on the way in: a missing or malformed field just
+  // falls back to the built-in default rather than breaking the page for
+  // every customer because of one bad save.
+  async function loadSiteConfig() {
+    let cfg = null;
+    try {
+      const snap = await getDoc(doc(db, "siteConfig", "live"));
+      if (snap.exists()) cfg = snap.data();
+    } catch (e) {
+      console.warn("Could not load live site config, using built-in defaults:", e);
+    }
+    if (!cfg) return;
+
+    if (cfg.prices && typeof cfg.prices === "object") {
+      const fmt = (v) => "$" + (Number.isInteger(v) ? v : v.toFixed(2));
+      MENU.forEach(m => {
+        const v = Number(cfg.prices[m.id]);
+        if (!Number.isFinite(v) || v < 0) return;
+        m.price = v;
+        // The item-picker price badges are static markup, repeated on more
+        // than one page (Home's preview, the Menu page, and the actual
+        // order picker) and not re-rendered from MENU each time — so every
+        // copy needs updating by hand here, or a saved price change would
+        // calculate correctly but still *display* the old built-in price.
+        document.querySelectorAll(`[data-shot="card-${m.id}"] .pick-price`)
+          .forEach(badge => { badge.textContent = fmt(v); });
+      });
+      const cu = Number(cfg.prices.cucumber);
+      if (Number.isFinite(cu) && cu >= 0) UPCHARGE.cucumber.extra = cu;
+      const no = Number(cfg.prices.nori);
+      if (Number.isFinite(no) && no >= 0) UPCHARGE.nori.extra = no;
+
+      const note = document.getElementById("extrasPriceNote");
+      if (note) {
+        const cuP = UPCHARGE.cucumber.extra, noP = UPCHARGE.nori.extra;
+        note.textContent = (cuP === noP)
+          ? `All free except extra cucumber and extra nori, ${fmt(cuP)} each.`
+          : `All free except extra cucumber (${fmt(cuP)}) and extra nori (${fmt(noP)}).`;
+      }
+    }
+
+    // Cap is clamped to MAX_DAY_CAP: the Firestore rules use that number as
+    // a hard ceiling on the shared daily counter, so promising more here
+    // than the database will actually accept would just produce silent
+    // failures for customers on a day Tony thought he'd opened up further.
+    if (cfg.hours && typeof cfg.hours === "object") {
+      Object.keys(DAY_RULES).forEach(k => {
+        const h = cfg.hours[k];
+        if (!h || typeof h !== "object") return;
+        if (h.start) DAY_RULES[k].start = String(h.start);
+        if (h.end) DAY_RULES[k].end = String(h.end);
+        const cap = Number(h.cap);
+        if (Number.isFinite(cap) && cap > 0) DAY_RULES[k].cap = Math.min(Math.round(cap), MAX_DAY_CAP);
+      });
+
+      // Two informational pages show a summary table (Mon-Fri as one row,
+      // since all five currently share a window). If they've been made to
+      // differ from /backend, Monday's window is shown as the best
+      // available one-line stand-in rather than leaving the old hardcoded
+      // hours displayed.
+      const wdText = `${DAY_RULES[1].start} – ${DAY_RULES[1].end}`;
+      const satText = `${DAY_RULES[6].start} – ${DAY_RULES[6].end}`;
+      document.querySelectorAll('[data-hours="weekday"]').forEach(el => { el.textContent = wdText; });
+      document.querySelectorAll('[data-hours="sat"]').forEach(el => { el.textContent = satText; });
+    }
+
+    if (cfg.announcement && cfg.announcement.active && String(cfg.announcement.text || "").trim()) {
+      const el = document.getElementById("siteBanner");
+      document.getElementById("siteBannerText").textContent = String(cfg.announcement.text).trim();
+      el.hidden = false;
+    }
+  }
+  const siteConfigReady = loadSiteConfig();
 
   function minutesOf(label) {
     const m = /^(\d{1,2}):(\d{2})\s*(AM|PM)$/i.exec(String(label).trim());
@@ -3232,6 +3325,7 @@ footer.site button:hover { color: var(--tea); }
   (async function route() {
     try { await completeSignInIfReturning(); } catch (e) { console.warn(e); }
     try { await authReady; } catch (e) {}
+    try { await siteConfigReady; } catch (e) {}
 
     const orderId = new URLSearchParams(window.location.search).get("order");
     if (orderId) initManageView(orderId);
