@@ -269,6 +269,25 @@ textarea { min-height: 64px; }
 .day-note { margin-bottom: 2px; }
 .day-note.warn { color: var(--salmon); font-weight: 700; }
 
+/* A relative sense of how booked a day is, without ever printing the
+   portion counts that would give it away — see renderDayMeter(). Colour
+   is the only thing that moves through the fill stages; the track itself
+   never implies a hard countdown. */
+.day-meter { margin-top: 7px; margin-bottom: 3px; }
+.day-meter-track {
+  height: 6px; border-radius: 999px; overflow: hidden;
+  background: var(--line);
+}
+.day-meter-fill {
+  height: 100%; border-radius: 999px; width: 0%;
+  background: var(--tea); transition: width .35s ease, background-color .35s ease;
+}
+.day-meter-fill.busy { background: #c9932f; }
+.day-meter-fill.full { background: var(--salmon); }
+.day-meter-label {
+  font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; display: block;
+}
+
 /* ---------------- required / recommended ----------------
    Red means the order cannot be placed without it; green means we would
    like it but the order goes through either way. The asterisk carries a
@@ -1260,6 +1279,10 @@ footer.site button:hover { color: var(--tea); }
             </label>
           </div>
           <div class="hint day-note" id="dayNote" hidden></div>
+          <div class="day-meter" id="dayMeter" hidden>
+            <div class="day-meter-track"><div class="day-meter-fill" id="dayMeterFill"></div></div>
+            <span class="day-meter-label" id="dayMeterLabel"></span>
+          </div>
           <div class="hint">We'll do our best to have it ready at your chosen time. If we're
           running behind we'll reach out.</div>
 
@@ -1411,6 +1434,10 @@ footer.site button:hover { color: var(--tea); }
       <label class="field-label" for="mPickupTime">Pickup time</label>
       <select id="mPickupTime"></select>
       <div class="hint day-note" id="mDayNote" hidden></div>
+      <div class="day-meter" id="mDayMeter" hidden>
+        <div class="day-meter-track"><div class="day-meter-fill" id="mDayMeterFill"></div></div>
+        <span class="day-meter-label" id="mDayMeterLabel"></span>
+      </div>
 
       <label class="field-label" for="mNotes">Notes (allergies, special requests)</label>
       <textarea id="mNotes" maxlength="300"></textarea>
@@ -1874,18 +1901,19 @@ footer.site button:hover { color: var(--tea); }
   // run all day at four times the volume.
   //
   // "cap" is portions per day, and it is deliberately never shown to
-  // customers as a number — they see "fully booked" or nothing at all.
+  // customers as a number — they see "fully booked" or nothing at all,
+  // or (see renderDayMeter below) a bar that fills up without a count.
   // Knowing exactly how full a day is tells strangers more about the
   // business than it helps them order.
   const DAY_RULES = {
     // Sunday has no entry: it's by-request-only, not an online-bookable day.
     // rulesForDate/slotsForDate fall through to "no slots" for it, and
     // onDateChanged shows a message pointing them to Instagram instead.
-    1: { start: "5:45 PM", end: "11:00 PM", cap: 15 }, // Monday
-    2: { start: "5:45 PM", end: "11:00 PM", cap: 15 },
-    3: { start: "5:45 PM", end: "11:00 PM", cap: 15 },
-    4: { start: "5:45 PM", end: "11:00 PM", cap: 15 },
-    5: { start: "5:45 PM", end: "11:00 PM", cap: 15 }, // Friday
+    1: { start: "5:45 PM", end: "11:00 PM", cap: 10 }, // Monday
+    2: { start: "5:45 PM", end: "11:00 PM", cap: 10 },
+    3: { start: "5:45 PM", end: "11:00 PM", cap: 10 },
+    4: { start: "5:45 PM", end: "11:00 PM", cap: 10 },
+    5: { start: "5:45 PM", end: "11:00 PM", cap: 10 }, // Friday
     6: { start: "8:00 AM", end: "8:00 PM",  cap: 60 }, // Saturday
   };
 
@@ -2165,6 +2193,27 @@ footer.site button:hover { color: var(--tea); }
       el.hidden = !msg;
     }
 
+    // A relative sense of how booked a day is — a bar that fills up, plus a
+    // vague word ("Filling up", "Almost fully booked") — never the portion
+    // counts themselves. Shared by the new-order form and the self-edit
+    // form below, each with its own element ids.
+    function renderDayMeter(meterId, fillId, labelId, used, cap) {
+      const meter = document.getElementById(meterId);
+      const fill = document.getElementById(fillId);
+      const label = document.getElementById(labelId);
+      if (used == null || !cap) { meter.hidden = true; return; }
+      const pct = Math.max(0, Math.min(1, used / cap));
+      fill.style.width = (pct * 100) + "%";
+      fill.classList.remove("busy", "full");
+      let text;
+      if (pct >= 1) { fill.classList.add("full"); text = "Fully booked"; }
+      else if (pct >= 0.8) { fill.classList.add("full"); text = "Almost fully booked"; }
+      else if (pct >= 0.5) { fill.classList.add("busy"); text = "Filling up"; }
+      else { text = "Plenty of availability"; }
+      label.textContent = text;
+      meter.hidden = false;
+    }
+
     // Rebuilds the time dropdown for whichever day was chosen. Weekday
     // evenings and weekend all-day are different windows, so the options a
     // customer sees have to change with the date rather than being one fixed
@@ -2199,6 +2248,7 @@ footer.site button:hover { color: var(--tea); }
       const iso = dateInput.value;
       const slotCount = rebuildTimes(iso);
       dayState = { iso, used: null, cap: null, full: false };
+      document.getElementById("dayMeter").hidden = true;
       if (!iso) { setDayNote(""); refresh(); return; }
 
       if (slotCount === 0) {
@@ -2221,6 +2271,7 @@ footer.site button:hover { color: var(--tea); }
       if (dateInput.value !== iso) return; // they moved on while we waited
 
       dayState = { iso, used, cap, full: used != null && used >= cap };
+      renderDayMeter("dayMeter", "dayMeterFill", "dayMeterLabel", used, cap);
       if (dayState.full) {
         setDayNote("We're fully booked on that day. Please pick another date.", "warn");
       } else {
@@ -2647,6 +2698,7 @@ footer.site button:hover { color: var(--tea); }
       const iso = mDate.value;
       const slots = rebuildManageTimes(iso, mTime.value || original.pickupTime);
       mDayState = { iso, used: null, cap: null };
+      document.getElementById("mDayMeter").hidden = true;
       if (!iso) { setMDayNote(""); refresh(); return; }
 
       const rules = rulesForDate(iso);
@@ -2657,6 +2709,7 @@ footer.site button:hover { color: var(--tea); }
       const used = await loadUsedPortions(iso);
       if (mDate.value !== iso) return;
       mDayState = { iso, used, cap: rules ? rules.cap : MAX_DAY_CAP };
+      if (rules) renderDayMeter("mDayMeter", "mDayMeterFill", "mDayMeterLabel", used, mDayState.cap);
 
       if (used != null && rules && used >= rules.cap && iso !== original.pickupDate) {
         setMDayNote("We're fully booked on that day. Please pick another date.", "warn");
