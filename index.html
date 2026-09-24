@@ -288,6 +288,84 @@ textarea { min-height: 64px; }
   font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; display: block;
 }
 
+/* ---------------- custom pickup-date calendar ----------------
+   A browser's native date-picker can't be recolored by a page, so
+   showing availability at a glance meant replacing it with this
+   pop-up grid. Same three fullness colors as the meter above, just
+   painted a day early — on the day cell instead of only appearing
+   after it's picked. */
+.date-field { position: relative; }
+.date-trigger {
+  font: inherit; font-size: 15px; color: var(--ink); background: none;
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  width: 100%; display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; cursor: pointer; text-align: left;
+}
+.date-trigger svg { flex: none; color: var(--ink-soft); }
+.date-trigger:focus, .date-trigger.open {
+  border-color: var(--tea); outline: 2px solid var(--tea); outline-offset: 1px;
+}
+.date-cal {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 20;
+  width: 310px; max-width: calc(100vw - 32px);
+  background: var(--card); border: 1px solid var(--line); border-radius: 14px;
+  box-shadow: 0 18px 40px -18px rgba(37, 26, 56, .35);
+  padding: 14px;
+}
+.date-cal-head {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 10px; font-weight: 700; font-size: 14.5px;
+}
+.date-cal-nav {
+  font: inherit; background: none; border: 1px solid var(--line); border-radius: 8px;
+  width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center;
+  cursor: pointer; color: var(--ink);
+}
+.date-cal-nav:hover { border-color: var(--tea); color: var(--tea); }
+.date-cal-nav:disabled { opacity: .35; cursor: not-allowed; }
+.date-cal-nav:disabled:hover { border-color: var(--line); color: var(--ink); }
+.date-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.date-cal-dow {
+  font-size: 11px; font-weight: 700; text-align: center; color: var(--ink-soft);
+  padding-bottom: 4px;
+}
+.date-cell {
+  position: relative; aspect-ratio: 1; border: none; border-radius: 8px;
+  font: inherit; font-size: 13.5px; color: var(--ink); background: var(--rice-2);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.date-cell:hover:not(:disabled) { outline: 1.5px solid var(--tea); }
+.date-cell:disabled { background: none; color: var(--ink-soft); opacity: .35; cursor: not-allowed; }
+.date-cell.blank { visibility: hidden; cursor: default; }
+.date-cell.low { background: #d9d5c9; color: var(--ink); }
+.date-cell.busy { background: #f0c23e; color: var(--ink); }
+.date-cell.almost {
+  background: var(--salmon); color: #fff; font-weight: 700;
+}
+.date-cell.full {
+  background: #55504f; color: #fff; font-weight: 700; cursor: not-allowed;
+}
+.date-cell.full:disabled { opacity: 1; }
+.date-cell.sunday { background: none; color: var(--ink-soft); }
+.date-cell.pending { background: var(--rice-2); opacity: .6; }
+.date-cell.selected { outline: 2px solid var(--tea); outline-offset: -2px; font-weight: 700; }
+.date-cell.today::after {
+  content: ""; position: absolute; bottom: 4px; left: 50%; transform: translateX(-50%);
+  width: 4px; height: 4px; border-radius: 999px; background: currentColor; opacity: .6;
+}
+.date-cal-legend {
+  display: flex; flex-wrap: wrap; gap: 8px 10px; margin-top: 10px;
+  font-size: 11px; color: var(--ink-soft);
+}
+.date-cal-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.date-cal-legend i {
+  width: 9px; height: 9px; border-radius: 3px; display: inline-block;
+}
+.date-cal-legend i.low { background: #d9d5c9; }
+.date-cal-legend i.busy { background: #f0c23e; }
+.date-cal-legend i.almost { background: var(--salmon); }
+.date-cal-legend i.full { background: #55504f; }
+
 /* ---------------- required / recommended ----------------
    Red means the order cannot be placed without it; green means we would
    like it but the order goes through either way. The asterisk carries a
@@ -1267,10 +1345,18 @@ footer.site button:hover { color: var(--tea); }
           <p class="step-sub">Fully booked days can't be picked. Times are only the ones
           inside that day's window.</p>
           <div class="field-grid">
-            <label class="field">
+            <div class="field date-field" id="pickupDateField">
               <span>Pickup date <b class="req" title="Required" aria-label="required">*</b></span>
-              <input type="date" id="pickupDate" required>
-            </label>
+              <button type="button" class="date-trigger" id="pickupDateBtn" aria-haspopup="true" aria-expanded="false">
+                <span id="pickupDateBtnText">Choose a date</span>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.6"/>
+                  <path d="M3 9h18M8 3v4M16 3v4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>
+              </button>
+              <input type="hidden" id="pickupDate" required>
+              <div class="date-cal" id="pickupDateCal" hidden></div>
+            </div>
             <label class="field">
               <span>Pickup time <b class="req" title="Required" aria-label="required">*</b></span>
               <select id="pickupTime" required>
@@ -1563,7 +1649,7 @@ footer.site button:hover { color: var(--tea); }
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
   import {
     initializeFirestore, collection, addDoc, getDocs, doc, getDoc, updateDoc, serverTimestamp,
-    runTransaction,
+    runTransaction, query, where, documentId,
   } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
   import {
     initializeAppCheck, ReCaptchaEnterpriseProvider,
@@ -2331,6 +2417,165 @@ footer.site button:hover { color: var(--tea); }
     }
 
     dateInput.addEventListener("change", onDateChanged);
+
+    // ---------- custom pickup-date calendar ----------
+    //
+    // A native <input type=date> can't be recolored by any page, so a
+    // pop-up day grid replaces it here — the hidden #pickupDate input still
+    // carries the actual value and still fires "change", so onDateChanged
+    // and refresh() above are untouched. Each bookable day is tinted by
+    // how full it already is, using one Firestore range query per month
+    // shown (dayLoad doc ids are the iso date, so a single documentId()
+    // range covers a whole month) rather than a read per day.
+    const calBtn = document.getElementById("pickupDateBtn");
+    const calBtnText = document.getElementById("pickupDateBtnText");
+    const calField = document.getElementById("pickupDateField");
+    const calPanel = document.getElementById("pickupDateCal");
+    const todayIso = isoLocal(new Date());
+    let calShown = new Date(); calShown.setDate(1); // first-of-month being displayed
+    const calCache = new Map(); // "YYYY-MM" -> Map(iso -> used)
+    let calSelectedIso = "";
+
+    function monthKey(d) { return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0"); }
+    function isoOf(y, m, day) { return `${y}-${String(m + 1).padStart(2, "0")}-${String(day).padStart(2, "0")}`; }
+
+    async function fetchMonthUsage(shownMonth) {
+      const key = monthKey(shownMonth);
+      if (calCache.has(key)) return calCache.get(key);
+      const y = shownMonth.getFullYear(), m = shownMonth.getMonth();
+      const lastDay = new Date(y, m + 1, 0).getDate();
+      const startIso = isoOf(y, m, 1);
+      const endIso = isoOf(y, m, lastDay);
+      const usage = new Map();
+      calCache.set(key, usage); // set early so concurrent renders don't double-fetch
+      try {
+        const q = query(collection(db, "dayLoad"), where(documentId(), ">=", startIso), where(documentId(), "<=", endIso));
+        const snap = await getDocs(q);
+        snap.forEach(d => usage.set(d.id, Number(d.data().portions) || 0));
+      } catch (e) {
+        // Same fail-open stance as loadUsedPortions: an unreadable tally
+        // shows every day as open rather than blocking the calendar.
+        console.warn("Could not read month capacity:", e);
+      }
+      return usage;
+    }
+
+    function fullnessClass(used, cap) {
+      if (used >= cap) return "full"; // fully booked — its own color, not just "very almost"
+      const pct = used / cap;
+      if (pct >= 0.8) return "almost";
+      if (pct >= 0.5) return "busy";
+      return "low";
+    }
+
+    async function renderCalendar() {
+      const y = calShown.getFullYear(), m = calShown.getMonth();
+      const firstDow = new Date(y, m, 1).getDay();
+      const daysInMonth = new Date(y, m + 1, 0).getDate();
+      const monthLabel = calShown.toLocaleDateString("en-US", { month: "long", year: "numeric" });
+
+      // Never let them page before the month containing today.
+      const atEarliestMonth = y === new Date().getFullYear() && m === new Date().getMonth();
+
+      let cells = "";
+      for (let i = 0; i < firstDow; i++) cells += `<button type="button" class="date-cell blank" tabindex="-1" disabled></button>`;
+
+      const usage = calCache.get(monthKey(calShown)); // may still be loading (undefined)
+      for (let day = 1; day <= daysInMonth; day++) {
+        const iso = isoOf(y, m, day);
+        const dow = new Date(y, m, day).getDay();
+        const isPast = iso < todayIso;
+        const rules = DAY_RULES[dow];
+        const isSunday = !rules;
+        const isSelected = iso === calSelectedIso;
+        const isToday = iso === todayIso;
+        let cls = "date-cell", disabled = isPast, title = "";
+
+        if (isPast) {
+          // plain disabled styling
+        } else if (isSunday) {
+          cls += " sunday";
+          title = "By request only — message us on Instagram";
+        } else if (!usage) {
+          cls += " pending";
+        } else {
+          const used = usage.get(iso) || 0;
+          const bucket = fullnessClass(used, rules.cap);
+          cls += " " + bucket;
+          if (bucket === "full") { disabled = true; title = "Fully booked"; }
+        }
+        if (isSelected) cls += " selected";
+        if (isToday) cls += " today";
+
+        cells += `<button type="button" class="${cls}" data-iso="${iso}" ${disabled ? "disabled" : ""} title="${title}">${day}</button>`;
+      }
+
+      calPanel.innerHTML = `
+        <div class="date-cal-head">
+          <button type="button" class="date-cal-nav" id="calPrev" ${atEarliestMonth ? "disabled" : ""} aria-label="Previous month">‹</button>
+          <span>${monthLabel}</span>
+          <button type="button" class="date-cal-nav" id="calNext" aria-label="Next month">›</button>
+        </div>
+        <div class="date-cal-grid">
+          ${["Su","Mo","Tu","We","Th","Fr","Sa"].map(d => `<div class="date-cal-dow">${d}</div>`).join("")}
+          ${cells}
+        </div>
+        <div class="date-cal-legend">
+          <span><i class="low"></i>Open</span>
+          <span><i class="busy"></i>Filling up</span>
+          <span><i class="almost"></i>Almost full</span>
+          <span><i class="full"></i>Fully booked</span>
+        </div>
+      `;
+
+      document.getElementById("calPrev").addEventListener("click", () => { calShown.setMonth(calShown.getMonth() - 1); goToMonth(); });
+      document.getElementById("calNext").addEventListener("click", () => { calShown.setMonth(calShown.getMonth() + 1); goToMonth(); });
+      calPanel.querySelectorAll(".date-cell[data-iso]:not([disabled])").forEach(btn => {
+        btn.addEventListener("click", () => selectDate(btn.getAttribute("data-iso")));
+      });
+
+      if (!usage) {
+        // Kick off the fetch, then redraw this same month once it lands.
+        await fetchMonthUsage(calShown);
+        if (calShown.getMonth() === m && calShown.getFullYear() === y) renderCalendar();
+      }
+    }
+
+    function goToMonth() { renderCalendar(); }
+
+    function selectDate(iso) {
+      calSelectedIso = iso;
+      dateInput.value = iso;
+      dateInput.dispatchEvent(new Event("change"));
+      const d = new Date(iso.split("-").map(Number)[0], iso.split("-").map(Number)[1] - 1, iso.split("-").map(Number)[2]);
+      calBtnText.textContent = d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+      closeCalendar();
+    }
+
+    function openCalendar() {
+      calPanel.hidden = false;
+      calBtn.setAttribute("aria-expanded", "true");
+      calBtn.classList.add("open");
+      renderCalendar();
+      document.addEventListener("click", onOutsideClick, true);
+      document.addEventListener("keydown", onCalKeydown);
+    }
+    function closeCalendar() {
+      calPanel.hidden = true;
+      calBtn.setAttribute("aria-expanded", "false");
+      calBtn.classList.remove("open");
+      document.removeEventListener("click", onOutsideClick, true);
+      document.removeEventListener("keydown", onCalKeydown);
+    }
+    function onOutsideClick(e) {
+      if (!calField.contains(e.target)) closeCalendar();
+    }
+    function onCalKeydown(e) {
+      if (e.key === "Escape") closeCalendar();
+    }
+    calBtn.addEventListener("click", () => {
+      if (calPanel.hidden) openCalendar(); else closeCalendar();
+    });
 
     // "Personal Tray #2" only when there is more than one of them:
     // numbering a lone tray invites the question "where is #2?".
