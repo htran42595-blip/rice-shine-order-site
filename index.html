@@ -785,7 +785,7 @@ footer.site button:hover { color: var(--tea); }
     <div class="wrap hero-grid">
       <div>
         <div class="eyebrow">Vacaville, California</div>
-        <h1>Sushi bake, baked the morning you pick it up.</h1>
+        <h1>Sushi bake, baked right before pick up time.</h1>
         <p class="lede">One tray, one oven, one family. Order online, pay when you collect,
         and we walk it out to your car.</p>
         <div class="hero-cta">
@@ -909,7 +909,8 @@ footer.site button:hover { color: var(--tea); }
         <table>
           <tr><th>Day</th><th>Pickup window</th></tr>
           <tr><td>Monday &ndash; Friday</td><td class="num">5:45 PM &ndash; 11:00 PM</td></tr>
-          <tr><td>Saturday &amp; Sunday</td><td class="num">8:00 AM &ndash; 8:00 PM</td></tr>
+          <tr><td>Saturday</td><td class="num">8:00 AM &ndash; 8:00 PM</td></tr>
+          <tr><td>Sunday</td><td class="num">Upon request &mdash; please reach out to us</td></tr>
         </table>
       </div>
       <p style="margin-top:12px;color:var(--ink-soft)">
@@ -1000,16 +1001,8 @@ footer.site button:hover { color: var(--tea); }
 
       <div class="callout tea">
         <b>Where to come</b>
-        <p class="mono" style="font-size:17px;font-weight:700;margin:6px 0 10px">
-          412 Shefford Dr<br>Vacaville, CA 95687
-        </p>
-        <a class="btn" href="https://www.google.com/maps/search/?api=1&amp;query=412+Shefford+Dr,+Vacaville,+CA+95687" target="_blank" rel="noopener">Open in Google Maps</a>
-      </div>
-
-      <div class="callout warn">
-        <b>Use Google Maps, not Apple Maps</b>
-        <p>Apple Maps has a habit of sending people to the wrong place around here. Google Maps
-        gets it right.</p>
+        <p>We keep the exact address out of this public page. It's in your confirmation email,
+        along with a Google Maps link, as soon as you place an order.</p>
       </div>
 
       <h2 style="margin-top:30px">When you arrive</h2>
@@ -1025,7 +1018,8 @@ footer.site button:hover { color: var(--tea); }
         <table>
           <tr><th>Day</th><th>Window</th></tr>
           <tr><td>Monday &ndash; Friday</td><td class="num">5:45 PM &ndash; 11:00 PM</td></tr>
-          <tr><td>Saturday &amp; Sunday</td><td class="num">8:00 AM &ndash; 8:00 PM</td></tr>
+          <tr><td>Saturday</td><td class="num">8:00 AM &ndash; 8:00 PM</td></tr>
+          <tr><td>Sunday</td><td class="num">Upon request &mdash; please reach out to us</td></tr>
         </table>
       </div>
     </div>
@@ -1868,7 +1862,9 @@ footer.site button:hover { color: var(--tea); }
   // Knowing exactly how full a day is tells strangers more about the
   // business than it helps them order.
   const DAY_RULES = {
-    0: { start: "8:00 AM", end: "8:00 PM",  cap: 60 }, // Sunday
+    // Sunday has no entry: it's by-request-only, not an online-bookable day.
+    // rulesForDate/slotsForDate fall through to "no slots" for it, and
+    // onDateChanged shows a message pointing them to Instagram instead.
     1: { start: "5:45 PM", end: "11:00 PM", cap: 15 }, // Monday
     2: { start: "5:45 PM", end: "11:00 PM", cap: 15 },
     3: { start: "5:45 PM", end: "11:00 PM", cap: 15 },
@@ -2190,7 +2186,14 @@ footer.site button:hover { color: var(--tea); }
       if (!iso) { setDayNote(""); refresh(); return; }
 
       if (slotCount === 0) {
-        setDayNote("No pickup times left for that day. Please choose another date.", "warn");
+        const p = iso.split("-").map(Number);
+        const isSunday = p.length === 3 && new Date(p[0], p[1] - 1, p[2]).getDay() === 0;
+        setDayNote(
+          isSunday
+            ? "Sunday pickup is by request only. Message us on Instagram @ricenshine.sushibake and we'll see what we can do."
+            : "No pickup times left for that day. Please choose another date.",
+          "warn"
+        );
         refresh();
         return;
       }
