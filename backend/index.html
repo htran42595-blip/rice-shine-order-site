@@ -25,7 +25,11 @@
   .mono { font-family:'Space Mono', monospace; }
 
   header.top { background: var(--nori); color:#fff; padding:22px 20px 26px; text-align:center; }
-  header.top .brand { font-size:24px; font-weight:800; }
+  /* Same rice&shine wordmark as the main site (rice/shine bold, & a lighter
+     weight) recolored for this header's dark background instead of the
+     site's light one. */
+  header.top .brand { font-size:24px; font-weight:800; color:#fff; }
+  header.top .brand span { color:#cfc3e6; font-weight:400; }
   header.top .tagline { color:#cfc3e6; font-size:13px; margin-top:4px; }
 
   main { max-width:640px; margin:-14px auto 60px; padding:0 16px; }
@@ -107,7 +111,7 @@
 <body>
 
 <header class="top">
-  <div class="brand">🍙 Rice &amp; Shine</div>
+  <div class="brand">rice<span>&amp;</span>shine</div>
   <div class="tagline">Backend</div>
 </header>
 
