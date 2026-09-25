@@ -38,13 +38,24 @@
 
   label.field-label { display:block; font-size:13px; font-weight:700; margin:14px 0 6px; }
   label.field-label:first-child { margin-top:0; }
-  input[type=text], input[type=email], input[type=number], textarea {
+  input[type=text], input[type=email], input[type=number], input[type=datetime-local], textarea {
     width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px;
     background: var(--card); color: var(--ink); font-family:inherit; font-size:15px;
   }
   textarea { resize:vertical; min-height:70px; }
   input:focus, textarea:focus { outline:2px solid var(--tea); outline-offset:1px; }
   .hint { font-size:12px; color: var(--ink-soft); margin-top:5px; line-height:1.5; }
+
+  .cd-preview-wrap { margin-top:14px; }
+  .cd-preview-wrap .cd-preview-label { font-size:11px; text-transform:uppercase; letter-spacing:.06em;
+    color: var(--ink-soft); margin-bottom:6px; }
+  .cd-preview { display:flex; gap:6px; }
+  .cd-preview .cd-box { background: var(--nori); color:#fff; border-radius:8px;
+    min-width:46px; padding:5px 8px; text-align:center; line-height:1.15; }
+  .cd-preview .cd-num { font-family:'Space Mono', monospace; font-size:16px; font-weight:700; }
+  .cd-preview .cd-label { font-size:9px; letter-spacing:.08em; text-transform:uppercase;
+    color:#cfc3e6; margin-top:1px; }
+  .cd-preview .cd-sep { display:flex; align-items:center; font-weight:700; color: var(--ink-soft); }
 
   .price-row { display:flex; align-items:center; justify-content:space-between;
     gap:12px; padding:9px 0; border-bottom:1px solid var(--line); }
@@ -165,6 +176,21 @@
       </div>
       <label class="field-label" for="bannerText">Banner message</label>
       <textarea id="bannerText" maxlength="200" placeholder="e.g. Not accepting orders until further notice"></textarea>
+
+      <div class="toggle-row" style="margin-top:16px">
+        <label class="field-label" for="countdownEnabled" style="margin:0">Add a countdown timer</label>
+        <label class="switch"><input type="checkbox" id="countdownEnabled"><span class="slider"></span></label>
+      </div>
+      <label class="field-label" for="countdownEndsAt">Countdown ends</label>
+      <input type="datetime-local" id="countdownEndsAt">
+      <div class="hint">For a promo or deal deadline — shown next to the banner message, counting
+        down live in HR : MIN : SEC (and days, if there's more than one left). Uses your own local
+        time. Once it hits zero it just disappears on its own; the banner message keeps showing.</div>
+
+      <div class="cd-preview-wrap">
+        <div class="cd-preview-label">Preview</div>
+        <div class="cd-preview" id="cdPreview"></div>
+      </div>
     </div>
 
     <div class="card" id="saveCard">
@@ -247,8 +273,49 @@
       5: { start: "5:45 PM", end: "11:00 PM", cap: 10 },
       6: { start: "8:00 AM", end: "8:00 PM", cap: 60 },
     },
-    announcement: { active: false, text: "" },
+    announcement: { active: false, text: "", countdown: { enabled: false, endsAt: "" } },
   };
+
+  // Live HR/MIN/SEC (+ DAYS, past a day out) preview boxes, so Tony can see
+  // exactly what customers will see before saving — same math and same
+  // "just disappears" behavior at zero as the real banner on the site.
+  let cdPreviewTimer = null;
+  function updateCdPreview() {
+    const wrap = document.getElementById("cdPreview");
+    if (cdPreviewTimer) { clearInterval(cdPreviewTimer); cdPreviewTimer = null; }
+    const enabled = document.getElementById("countdownEnabled").checked;
+    const val = document.getElementById("countdownEndsAt").value;
+    if (!enabled) { wrap.innerHTML = '<span class="hint" style="margin:0">Off</span>'; return; }
+    if (!val) { wrap.innerHTML = '<span class="hint" style="margin:0">Pick a date and time above</span>'; return; }
+    const endsAtMs = new Date(val).getTime();
+    if (!Number.isFinite(endsAtMs)) { wrap.innerHTML = '<span class="hint" style="margin:0">That date didn’t parse</span>'; return; }
+    const pad = (n) => String(n).padStart(2, "0");
+    function tick() {
+      const remain = endsAtMs - Date.now();
+      if (remain <= 0) {
+        wrap.innerHTML = '<span class="hint" style="margin:0">Already passed — won’t show on the site</span>';
+        clearInterval(cdPreviewTimer);
+        cdPreviewTimer = null;
+        return;
+      }
+      const totalSec = Math.floor(remain / 1000);
+      const days = Math.floor(totalSec / 86400);
+      const hours = Math.floor((totalSec % 86400) / 3600);
+      const mins = Math.floor((totalSec % 3600) / 60);
+      const secs = totalSec % 60;
+      const boxes = [];
+      if (days > 0) boxes.push([String(days), days === 1 ? "Day" : "Days"]);
+      boxes.push([pad(hours), "Hr"], [pad(mins), "Min"], [pad(secs), "Sec"]);
+      wrap.innerHTML = boxes.map(([num, label], i) =>
+        (i > 0 ? '<span class="cd-sep">:</span>' : "") +
+        `<span class="cd-box"><div class="cd-num">${num}</div><div class="cd-label">${label}</div></span>`
+      ).join("");
+    }
+    tick();
+    cdPreviewTimer = setInterval(tick, 1000);
+  }
+  document.getElementById("countdownEnabled").addEventListener("change", updateCdPreview);
+  document.getElementById("countdownEndsAt").addEventListener("input", updateCdPreview);
 
   function show(id) {
     ["checkingState", "signInState", "linkSentState", "deniedState", "panelState"].forEach(s => {
@@ -301,6 +368,10 @@
     const ann = Object.assign({}, DEFAULTS.announcement, cfg.announcement || {});
     document.getElementById("bannerActive").checked = !!ann.active;
     document.getElementById("bannerText").value = ann.text || "";
+    const cd = Object.assign({}, DEFAULTS.announcement.countdown, ann.countdown || {});
+    document.getElementById("countdownEnabled").checked = !!cd.enabled;
+    document.getElementById("countdownEndsAt").value = cd.endsAt || "";
+    updateCdPreview();
   }
 
   async function loadPanel() {
@@ -365,9 +436,18 @@
       return;
     }
 
+    const countdownEnabled = document.getElementById("countdownEnabled").checked;
+    const countdownEndsAt = document.getElementById("countdownEndsAt").value;
+    if (countdownEnabled && (!countdownEndsAt || !Number.isFinite(new Date(countdownEndsAt).getTime()))) {
+      errEl.textContent = "Pick a valid date and time for the countdown to end at, or turn the countdown off.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
     const announcement = {
       active: document.getElementById("bannerActive").checked,
       text: document.getElementById("bannerText").value.trim(),
+      countdown: { enabled: countdownEnabled, endsAt: countdownEnabled ? countdownEndsAt : "" },
     };
 
     btn.disabled = true;

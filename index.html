@@ -108,6 +108,17 @@ header.top .tagline {
   font-size: 14px; font-weight: 700; line-height: 1.4;
 }
 .site-banner .wrap { max-width: 720px; margin: 0 auto; }
+.site-banner .wrap { display: flex; flex-wrap: wrap; align-items: center;
+  justify-content: center; gap: 6px 14px; }
+.banner-countdown { display: flex; align-items: center; gap: 6px; }
+.banner-countdown .cd-box {
+  background: var(--nori); color: #fff; border-radius: 8px;
+  min-width: 46px; padding: 4px 8px; text-align: center; line-height: 1.15;
+}
+.banner-countdown .cd-num { font-family: 'Space Mono', monospace; font-size: 16px; font-weight: 700; }
+.banner-countdown .cd-label { font-size: 9px; letter-spacing: .08em; text-transform: uppercase;
+  color: #cfc3e6; margin-top: 1px; }
+.banner-countdown .cd-sep { font-weight: 700; opacity: .7; }
 
 .page-head { padding: 40px 0 30px; border-bottom: 1px solid var(--hairline); }
 .page-head .eyebrow::before { background: var(--salmon); }
@@ -885,7 +896,10 @@ footer.site button:hover { color: var(--tea); }
   </div>
 </header>
 
-<div id="siteBanner" class="site-banner" hidden><div class="wrap" id="siteBannerText"></div></div>
+<div id="siteBanner" class="site-banner" hidden><div class="wrap">
+  <span id="siteBannerText"></span>
+  <span id="siteBannerCountdown" class="banner-countdown" hidden></span>
+</div></div>
 
 <!-- ==================== HOME ==================== -->
 <main class="page" id="page-home">
@@ -2020,6 +2034,40 @@ footer.site button:hover { color: var(--tea); }
   // date string falls on. The exact per-day cap is applied here in the page.
   const MAX_DAY_CAP = 60;
 
+  // Live HR/MIN/SEC (and DAYS, once there's more than a day left) boxes for
+  // a promo deadline, styled to match the banner. Re-renders every second;
+  // stops and hides itself the moment the deadline passes rather than
+  // sitting at 00:00:00, since a stuck countdown reads as broken, not over.
+  let bannerCountdownTimer = null;
+  function startBannerCountdown(endsAtMs) {
+    const wrap = document.getElementById("siteBannerCountdown");
+    if (bannerCountdownTimer) clearInterval(bannerCountdownTimer);
+    const pad = (n) => String(n).padStart(2, "0");
+    function tick() {
+      const remain = endsAtMs - Date.now();
+      if (remain <= 0) {
+        clearInterval(bannerCountdownTimer);
+        wrap.hidden = true;
+        return;
+      }
+      const totalSec = Math.floor(remain / 1000);
+      const days = Math.floor(totalSec / 86400);
+      const hours = Math.floor((totalSec % 86400) / 3600);
+      const mins = Math.floor((totalSec % 3600) / 60);
+      const secs = totalSec % 60;
+      const boxes = [];
+      if (days > 0) boxes.push([String(days), days === 1 ? "Day" : "Days"]);
+      boxes.push([pad(hours), "Hr"], [pad(mins), "Min"], [pad(secs), "Sec"]);
+      wrap.innerHTML = boxes.map(([num, label], i) =>
+        (i > 0 ? '<span class="cd-sep">:</span>' : "") +
+        `<span class="cd-box"><div class="cd-num">${num}</div><div class="cd-label">${label}</div></span>`
+      ).join("");
+      wrap.hidden = false;
+    }
+    tick();
+    bannerCountdownTimer = setInterval(tick, 1000);
+  }
+
   // ---------- live site config, editable from /backend ----------
   //
   // Prices, pickup hours/caps, and the announcement banner all live in one
@@ -2097,6 +2145,17 @@ footer.site button:hover { color: var(--tea); }
       const el = document.getElementById("siteBanner");
       document.getElementById("siteBannerText").textContent = String(cfg.announcement.text).trim();
       el.hidden = false;
+
+      // Countdown to a deal's deadline, for a promo push. Parsed as local
+      // time (no timezone suffix) since that's what the /backend
+      // datetime picker gives and this is a single-location business — no
+      // timezone conversion to get wrong. A past or malformed deadline
+      // just means no countdown, not a broken banner: the text still shows.
+      const cd = cfg.announcement.countdown;
+      if (cd && cd.enabled && cd.endsAt) {
+        const endsAtMs = new Date(cd.endsAt).getTime();
+        if (Number.isFinite(endsAtMs) && endsAtMs > Date.now()) startBannerCountdown(endsAtMs);
+      }
     }
   }
   const siteConfigReady = loadSiteConfig();
