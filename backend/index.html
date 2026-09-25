@@ -217,6 +217,7 @@
       <select id="promoType">
         <option value="spend">Free item for every $ spent</option>
         <option value="shareable">Free drink per Shareable Tray</option>
+        <option value="date">Free drink for orders picked up on a date</option>
       </select>
 
       <div id="promoSpendFields">
@@ -233,6 +234,15 @@
         <div id="promoShareableChoices" class="check-list"></div>
         <div class="hint">One free drink of the customer's choice, from whichever of these are
           checked, for every Shareable Tray in their order.</div>
+      </div>
+
+      <div id="promoDateFields">
+        <label class="field-label" for="promoDateDate">Pickup date</label>
+        <input type="date" id="promoDateDate">
+        <label class="field-label" for="promoDateItem">Free drink</label>
+        <select id="promoDateItem"></select>
+        <div class="hint">Any order picked up on this one date gets this drink free — no threshold,
+          no picking, one date only.</div>
       </div>
 
       <div class="hint" id="promoPreview" style="margin-top:14px"></div>
@@ -323,6 +333,7 @@
       active: false, code: "", type: "spend",
       spend: { threshold: 15, freeItem: "green-tea" },
       shareable: { choices: ["green-tea", "orange-tea", "viet-coffee"] },
+      date: { date: "", freeItem: "green-tea" },
     },
   };
 
@@ -333,6 +344,8 @@
   (function populatePromoOptions() {
     const sel = document.getElementById("promoSpendItem");
     sel.innerHTML = DRINK_FIELDS.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+    const dateSel = document.getElementById("promoDateItem");
+    dateSel.innerHTML = DRINK_FIELDS.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
     const wrap = document.getElementById("promoShareableChoices");
     wrap.innerHTML = DRINK_FIELDS.map(f =>
       `<label class="check-row"><input type="checkbox" data-drink-choice="${f.id}"> ${f.name}</label>`
@@ -343,6 +356,7 @@
     const type = document.getElementById("promoType").value;
     document.getElementById("promoSpendFields").classList.toggle("hidden", type !== "spend");
     document.getElementById("promoShareableFields").classList.toggle("hidden", type !== "shareable");
+    document.getElementById("promoDateFields").classList.toggle("hidden", type !== "date");
   }
 
   function updatePromoPreview() {
@@ -357,6 +371,13 @@
       const item = document.getElementById("promoSpendItem");
       const itemName = item.options[item.selectedIndex] ? item.options[item.selectedIndex].text : "?";
       wrap.textContent = `Code "${code}" — free ${itemName} for every $${threshold || "?"} spent.`;
+    } else if (type === "date") {
+      const dateVal = document.getElementById("promoDateDate").value;
+      const item = document.getElementById("promoDateItem");
+      const itemName = item.options[item.selectedIndex] ? item.options[item.selectedIndex].text : "?";
+      wrap.textContent = dateVal
+        ? `Code "${code}" — free ${itemName} for any order picked up on ${dateVal}.`
+        : `Code "${code}" — pick a date below for this to do anything.`;
     } else {
       const checked = Array.from(document.querySelectorAll("[data-drink-choice]:checked")).map(c => {
         const label = c.closest("label");
@@ -368,7 +389,8 @@
     }
   }
 
-  ["promoActive", "promoCode", "promoType", "promoSpendThreshold", "promoSpendItem"].forEach(id => {
+  ["promoActive", "promoCode", "promoType", "promoSpendThreshold", "promoSpendItem",
+   "promoDateDate", "promoDateItem"].forEach(id => {
     document.getElementById(id).addEventListener("input", updatePromoPreview);
     document.getElementById(id).addEventListener("change", updatePromoPreview);
   });
@@ -475,7 +497,7 @@
     const promo = Object.assign({}, DEFAULTS.promo, cfg.promo || {});
     document.getElementById("promoActive").checked = !!promo.active;
     document.getElementById("promoCode").value = promo.code || "";
-    const type = promo.type === "shareable" ? "shareable" : "spend";
+    const type = ["shareable", "date"].includes(promo.type) ? promo.type : "spend";
     document.getElementById("promoType").value = type;
     const spend = Object.assign({}, DEFAULTS.promo.spend, promo.spend || {});
     document.getElementById("promoSpendThreshold").value = spend.threshold || 15;
@@ -487,6 +509,10 @@
     document.querySelectorAll("[data-drink-choice]").forEach(cb => {
       cb.checked = choices.includes(cb.dataset.drinkChoice);
     });
+    const dateCfg = Object.assign({}, DEFAULTS.promo.date, promo.date || {});
+    document.getElementById("promoDateDate").value = dateCfg.date || "";
+    document.getElementById("promoDateItem").value = DRINK_FIELDS.some(f => f.id === dateCfg.freeItem)
+      ? dateCfg.freeItem : DEFAULTS.promo.date.freeItem;
     updatePromoTypeVisibility();
     updatePromoPreview();
   }
@@ -569,11 +595,14 @@
 
     const promoActive = document.getElementById("promoActive").checked;
     const promoCode = document.getElementById("promoCode").value.trim().toUpperCase();
-    const promoType = document.getElementById("promoType").value === "shareable" ? "shareable" : "spend";
+    const promoType = ["shareable", "date"].includes(document.getElementById("promoType").value)
+      ? document.getElementById("promoType").value : "spend";
     const promoThreshold = Number(document.getElementById("promoSpendThreshold").value);
     const promoSpendItem = document.getElementById("promoSpendItem").value;
     const promoChoices = Array.from(document.querySelectorAll("[data-drink-choice]:checked"))
       .map(cb => cb.dataset.drinkChoice);
+    const promoDate = document.getElementById("promoDateDate").value;
+    const promoDateItem = document.getElementById("promoDateItem").value;
 
     if (promoActive && !promoCode) {
       errEl.textContent = "Set a promo code, or turn the promo code toggle off.";
@@ -590,6 +619,11 @@
       errEl.classList.remove("hidden");
       return;
     }
+    if (promoActive && promoType === "date" && !promoDate) {
+      errEl.textContent = "Pick a pickup date for the date-based promo, or turn the promo code toggle off.";
+      errEl.classList.remove("hidden");
+      return;
+    }
 
     const promo = {
       active: promoActive,
@@ -597,6 +631,7 @@
       type: promoType,
       spend: { threshold: promoThreshold || 15, freeItem: promoSpendItem || "green-tea" },
       shareable: { choices: promoChoices.length ? promoChoices : DEFAULTS.promo.shareable.choices },
+      date: { date: promoDate || "", freeItem: promoDateItem || "green-tea" },
     };
 
     btn.disabled = true;

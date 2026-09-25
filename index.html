@@ -2052,17 +2052,19 @@ footer.site button:hover { color: var(--tea); }
   const MAX_DAY_CAP = 60;
 
   // Optional promo code, off by default and only usable once Tony turns it
-  // on and sets a code from /backend. Two shapes: "spend" gives a free item
-  // for every full $threshold of paid items in the cart; "shareable" gives
-  // one free drink of choice per Shareable Tray in the cart. Only one shape
-  // is active at a time. Mutated in place by loadSiteConfig() below, same
-  // pattern as MENU/UPCHARGE/DAY_RULES.
+  // on and sets a code from /backend. Three shapes: "spend" gives a free
+  // item for every full $threshold of paid items in the cart; "shareable"
+  // gives one free drink of choice per Shareable Tray in the cart; "date"
+  // gives one free (Tony-picked) drink to any order picked up on a single
+  // Tony-picked date. Only one shape is active at a time. Mutated in place
+  // by loadSiteConfig() below, same pattern as MENU/UPCHARGE/DAY_RULES.
   const PROMO = {
     active: false,
     code: "",
     type: "spend",
     spend: { threshold: 15, freeItem: "green-tea" },
     shareable: { choices: ["green-tea", "orange-tea", "viet-coffee"] },
+    date: { date: "", freeItem: "green-tea" },
   };
 
   // Live HR/MIN/SEC (and DAYS, once there's more than a day left) boxes for
@@ -2192,7 +2194,7 @@ footer.site button:hover { color: var(--tea); }
     if (cfg.promo && typeof cfg.promo === "object") {
       PROMO.active = !!cfg.promo.active;
       PROMO.code = String(cfg.promo.code || "").trim();
-      PROMO.type = cfg.promo.type === "shareable" ? "shareable" : "spend";
+      PROMO.type = ["shareable", "date"].includes(cfg.promo.type) ? cfg.promo.type : "spend";
 
       const sp = cfg.promo.spend || {};
       const threshold = Number(sp.threshold);
@@ -2206,6 +2208,15 @@ footer.site button:hover { color: var(--tea); }
         const valid = sh.choices.filter(id => MENU.some(m => m.id === id && m.portions === 0));
         if (valid.length) PROMO.shareable.choices = valid;
       }
+
+      const dt = cfg.promo.date || {};
+      if (/^\d{4}-\d{2}-\d{2}$/.test(String(dt.date || ""))) PROMO.date.date = dt.date;
+      if (dt.freeItem && MENU.some(m => m.id === dt.freeItem && m.portions === 0)) {
+        PROMO.date.freeItem = dt.freeItem;
+      }
+      // A "date" promo with no date set can never match anything — treat it
+      // the same as a promo pointed at a removed item, below.
+      if (PROMO.type === "date" && !PROMO.date.date) PROMO.active = false;
 
       // A promo with no code, or a "spend" promo pointed at a since-removed
       // item, can never actually be redeemed — treat it as off rather than
@@ -2512,6 +2523,14 @@ footer.site button:hover { color: var(--tea); }
         return { count, items: [{ qty: count, name: m.name + " (free — promo)", menuId: m.id, price: 0 }] };
       }
 
+      if (PROMO.type === "date") {
+        // One free (Tony-picked) drink, but only for an order picked up on
+        // the single date he set — not a threshold or a per-item count.
+        if (!dateInput.value || dateInput.value !== PROMO.date.date) return { count: 0, items: [] };
+        const m = menuById(PROMO.date.freeItem);
+        return { count: 1, items: [{ qty: 1, name: m.name + " (free — promo)", menuId: m.id, price: 0 }] };
+      }
+
       // "shareable": one free drink of choice per Shareable Tray in the cart.
       const count = lines.filter(l => l.type === "shareable").length;
       if (!count) { promoFreeChoices = []; return { count: 0, items: [] }; }
@@ -2538,9 +2557,13 @@ footer.site button:hover { color: var(--tea); }
         return;
       }
       if (!promo.count) {
-        promoMsgEl.textContent = PROMO.type === "spend"
-          ? `Code applied — spend $${PROMO.spend.threshold} to unlock a free ${menuById(PROMO.spend.freeItem).name}.`
-          : "Code applied — add a Shareable Tray to unlock a free drink.";
+        if (PROMO.type === "spend") {
+          promoMsgEl.textContent = `Code applied — spend $${PROMO.spend.threshold} to unlock a free ${menuById(PROMO.spend.freeItem).name}.`;
+        } else if (PROMO.type === "date") {
+          promoMsgEl.textContent = `Code applied — only valid for pickup on ${friendlyDate(PROMO.date.date)}.`;
+        } else {
+          promoMsgEl.textContent = "Code applied — add a Shareable Tray to unlock a free drink.";
+        }
         promoMsgEl.className = "hint";
         promoChoicesEl.innerHTML = "";
         return;
@@ -2548,6 +2571,12 @@ footer.site button:hover { color: var(--tea); }
       if (PROMO.type === "spend") {
         const name = menuById(PROMO.spend.freeItem).name;
         promoMsgEl.textContent = `Code applied — ${promo.count} free ${name}${promo.count > 1 ? "s" : ""} added!`;
+        promoMsgEl.className = "hint good";
+        promoChoicesEl.innerHTML = "";
+        return;
+      }
+      if (PROMO.type === "date") {
+        promoMsgEl.textContent = `Code applied — free ${menuById(PROMO.date.freeItem).name} added for your pickup date!`;
         promoMsgEl.className = "hint good";
         promoChoicesEl.innerHTML = "";
         return;
