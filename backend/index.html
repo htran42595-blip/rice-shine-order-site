@@ -42,13 +42,17 @@
 
   label.field-label { display:block; font-size:13px; font-weight:700; margin:14px 0 6px; }
   label.field-label:first-child { margin-top:0; }
-  input[type=text], input[type=email], input[type=number], input[type=datetime-local], textarea {
+  input[type=text], input[type=email], input[type=number], input[type=datetime-local], textarea, select {
     width:100%; padding:11px 12px; border:1px solid var(--line); border-radius:10px;
     background: var(--card); color: var(--ink); font-family:inherit; font-size:15px;
   }
   textarea { resize:vertical; min-height:70px; }
-  input:focus, textarea:focus { outline:2px solid var(--tea); outline-offset:1px; }
+  input:focus, textarea:focus, select:focus { outline:2px solid var(--tea); outline-offset:1px; }
   .hint { font-size:12px; color: var(--ink-soft); margin-top:5px; line-height:1.5; }
+
+  .check-list { display:grid; gap:8px; margin-top:2px; }
+  .check-row { display:flex; align-items:center; gap:9px; font-size:14.5px; }
+  .check-row input { width:auto; margin:0; }
 
   .cd-preview-wrap { margin-top:14px; }
   .cd-preview-wrap .cd-preview-label { font-size:11px; text-transform:uppercase; letter-spacing:.06em;
@@ -197,6 +201,43 @@
       </div>
     </div>
 
+    <div class="card">
+      <h2>Promo code</h2>
+      <p class="sub">A code customers type in on the order page to unlock a free item, calculated
+        and shown to them live as they build their order. Off unless both the toggle is on and a
+        code is set below.</p>
+      <div class="toggle-row">
+        <label class="field-label" for="promoActive" style="margin:0">Enable promo code</label>
+        <label class="switch"><input type="checkbox" id="promoActive"><span class="slider"></span></label>
+      </div>
+      <label class="field-label" for="promoCode">Promo code customers type in</label>
+      <input type="text" id="promoCode" maxlength="30" placeholder="e.g. SUSHI15" style="text-transform:uppercase">
+
+      <label class="field-label" for="promoType">Promo type</label>
+      <select id="promoType">
+        <option value="spend">Free item for every $ spent</option>
+        <option value="shareable">Free drink per Shareable Tray</option>
+      </select>
+
+      <div id="promoSpendFields">
+        <label class="field-label" for="promoSpendThreshold">Spend threshold ($)</label>
+        <input type="number" id="promoSpendThreshold" min="1" step="1" value="15">
+        <label class="field-label" for="promoSpendItem">Free item</label>
+        <select id="promoSpendItem"></select>
+        <div class="hint">One free item for every full multiple of this amount in paid items — a
+          $32 order at a $15 threshold gets 2.</div>
+      </div>
+
+      <div id="promoShareableFields">
+        <label class="field-label">Drinks customers can choose from</label>
+        <div id="promoShareableChoices" class="check-list"></div>
+        <div class="hint">One free drink of the customer's choice, from whichever of these are
+          checked, for every Shareable Tray in their order.</div>
+      </div>
+
+      <div class="hint" id="promoPreview" style="margin-top:14px"></div>
+    </div>
+
     <div class="card" id="saveCard">
       <div class="notice warn hidden" id="saveError"></div>
       <div class="notice ok hidden" id="saveOk">Saved. The site will pick this up the next time someone loads it.</div>
@@ -278,7 +319,61 @@
       6: { start: "8:00 AM", end: "8:00 PM", cap: 60 },
     },
     announcement: { active: false, text: "", countdown: { enabled: false, endsAt: "" } },
+    promo: {
+      active: false, code: "", type: "spend",
+      spend: { threshold: 15, freeItem: "green-tea" },
+      shareable: { choices: ["green-tea", "orange-tea", "viet-coffee"] },
+    },
   };
+
+  // The only items that can ever be the "free" one in a promo — drinks cost
+  // no prep, so giving one away never touches kitchen capacity.
+  const DRINK_FIELDS = MENU_PRICE_FIELDS.filter(f => ["green-tea", "orange-tea", "viet-coffee"].includes(f.id));
+
+  (function populatePromoOptions() {
+    const sel = document.getElementById("promoSpendItem");
+    sel.innerHTML = DRINK_FIELDS.map(f => `<option value="${f.id}">${f.name}</option>`).join("");
+    const wrap = document.getElementById("promoShareableChoices");
+    wrap.innerHTML = DRINK_FIELDS.map(f =>
+      `<label class="check-row"><input type="checkbox" data-drink-choice="${f.id}"> ${f.name}</label>`
+    ).join("");
+  })();
+
+  function updatePromoTypeVisibility() {
+    const type = document.getElementById("promoType").value;
+    document.getElementById("promoSpendFields").classList.toggle("hidden", type !== "spend");
+    document.getElementById("promoShareableFields").classList.toggle("hidden", type !== "shareable");
+  }
+
+  function updatePromoPreview() {
+    const wrap = document.getElementById("promoPreview");
+    const active = document.getElementById("promoActive").checked;
+    const code = document.getElementById("promoCode").value.trim();
+    if (!active) { wrap.textContent = "Off"; return; }
+    if (!code) { wrap.textContent = "Enter a code above to turn this on."; return; }
+    const type = document.getElementById("promoType").value;
+    if (type === "spend") {
+      const threshold = Number(document.getElementById("promoSpendThreshold").value) || 0;
+      const item = document.getElementById("promoSpendItem");
+      const itemName = item.options[item.selectedIndex] ? item.options[item.selectedIndex].text : "?";
+      wrap.textContent = `Code "${code}" — free ${itemName} for every $${threshold || "?"} spent.`;
+    } else {
+      const checked = Array.from(document.querySelectorAll("[data-drink-choice]:checked")).map(c => {
+        const label = c.closest("label");
+        return label ? label.textContent.trim() : c.dataset.drinkChoice;
+      });
+      wrap.textContent = checked.length
+        ? `Code "${code}" — free drink of choice (${checked.join(", ")}) with every Shareable Tray.`
+        : `Code "${code}" — check at least one drink below for this to do anything.`;
+    }
+  }
+
+  ["promoActive", "promoCode", "promoType", "promoSpendThreshold", "promoSpendItem"].forEach(id => {
+    document.getElementById(id).addEventListener("input", updatePromoPreview);
+    document.getElementById(id).addEventListener("change", updatePromoPreview);
+  });
+  document.getElementById("promoType").addEventListener("change", updatePromoTypeVisibility);
+  document.getElementById("promoShareableChoices").addEventListener("change", updatePromoPreview);
 
   // Live HR/MIN/SEC (+ DAYS, past a day out) preview boxes, so Tony can see
   // exactly what customers will see before saving — same math and same
@@ -376,6 +471,24 @@
     document.getElementById("countdownEnabled").checked = !!cd.enabled;
     document.getElementById("countdownEndsAt").value = cd.endsAt || "";
     updateCdPreview();
+
+    const promo = Object.assign({}, DEFAULTS.promo, cfg.promo || {});
+    document.getElementById("promoActive").checked = !!promo.active;
+    document.getElementById("promoCode").value = promo.code || "";
+    const type = promo.type === "shareable" ? "shareable" : "spend";
+    document.getElementById("promoType").value = type;
+    const spend = Object.assign({}, DEFAULTS.promo.spend, promo.spend || {});
+    document.getElementById("promoSpendThreshold").value = spend.threshold || 15;
+    document.getElementById("promoSpendItem").value = DRINK_FIELDS.some(f => f.id === spend.freeItem)
+      ? spend.freeItem : DEFAULTS.promo.spend.freeItem;
+    const shareable = Object.assign({}, DEFAULTS.promo.shareable, promo.shareable || {});
+    const choices = Array.isArray(shareable.choices) && shareable.choices.length
+      ? shareable.choices : DEFAULTS.promo.shareable.choices;
+    document.querySelectorAll("[data-drink-choice]").forEach(cb => {
+      cb.checked = choices.includes(cb.dataset.drinkChoice);
+    });
+    updatePromoTypeVisibility();
+    updatePromoPreview();
   }
 
   async function loadPanel() {
@@ -454,10 +567,42 @@
       countdown: { enabled: countdownEnabled, endsAt: countdownEnabled ? countdownEndsAt : "" },
     };
 
+    const promoActive = document.getElementById("promoActive").checked;
+    const promoCode = document.getElementById("promoCode").value.trim().toUpperCase();
+    const promoType = document.getElementById("promoType").value === "shareable" ? "shareable" : "spend";
+    const promoThreshold = Number(document.getElementById("promoSpendThreshold").value);
+    const promoSpendItem = document.getElementById("promoSpendItem").value;
+    const promoChoices = Array.from(document.querySelectorAll("[data-drink-choice]:checked"))
+      .map(cb => cb.dataset.drinkChoice);
+
+    if (promoActive && !promoCode) {
+      errEl.textContent = "Set a promo code, or turn the promo code toggle off.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+    if (promoActive && promoType === "spend" && (!Number.isFinite(promoThreshold) || promoThreshold <= 0)) {
+      errEl.textContent = "The promo's spend threshold needs to be a number greater than 0.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+    if (promoActive && promoType === "shareable" && !promoChoices.length) {
+      errEl.textContent = "Check at least one drink customers can choose for the Shareable Tray promo.";
+      errEl.classList.remove("hidden");
+      return;
+    }
+
+    const promo = {
+      active: promoActive,
+      code: promoCode,
+      type: promoType,
+      spend: { threshold: promoThreshold || 15, freeItem: promoSpendItem || "green-tea" },
+      shareable: { choices: promoChoices.length ? promoChoices : DEFAULTS.promo.shareable.choices },
+    };
+
     btn.disabled = true;
     btn.textContent = "Saving…";
     try {
-      await setDoc(doc(db, "siteConfig", "live"), { prices, hours, announcement }, { merge: true });
+      await setDoc(doc(db, "siteConfig", "live"), { prices, hours, announcement, promo }, { merge: true });
       okEl.classList.remove("hidden");
       okEl.scrollIntoView({ block: "center", behavior: "smooth" });
     } catch (e) {

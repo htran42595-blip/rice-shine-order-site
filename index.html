@@ -278,6 +278,15 @@ textarea, select, .field input, .field select, .field textarea {
 input:focus, textarea:focus, select:focus { border-color: var(--tea); outline: 2px solid var(--tea); outline-offset: 1px; }
 textarea { min-height: 64px; }
 .hint { font-size: 12.5px; color: var(--ink-soft); margin-top: 5px; }
+.hint.warn { color: var(--salmon); font-weight: 700; }
+.hint.good { color: var(--matcha); font-weight: 700; }
+
+/* Promo code box in the running-total sidebar. Only shown at all when
+   Tony has a promo turned on from /backend — a customer should never see
+   an empty "promo code" field when nothing is running. */
+.promo-box { margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--line); }
+.promo-box .field { margin: 0; }
+.promo-choice { margin-top: 8px; }
 .linkish {
   background: none; border: 0; padding: 0; font: inherit; color: var(--tea);
   text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
@@ -1456,6 +1465,14 @@ footer.site button:hover { color: var(--tea); }
             </div>
             <span class="big mono" id="totalAmount">$0</span>
             <div class="k" id="tCount">nothing added yet</div>
+            <div class="promo-box" id="promoBox" hidden>
+              <label class="field">
+                <span>Promo code</span>
+                <input type="text" id="promoCode" maxlength="30" placeholder="Enter code" autocomplete="off">
+              </label>
+              <div class="hint" id="promoMsg"></div>
+              <div id="promoChoices"></div>
+            </div>
             <div class="kitchen">
               <div class="kh">What the kitchen sees</div>
               <pre id="kitchenNote">Add something to see this.</pre>
@@ -2034,6 +2051,20 @@ footer.site button:hover { color: var(--tea); }
   // date string falls on. The exact per-day cap is applied here in the page.
   const MAX_DAY_CAP = 60;
 
+  // Optional promo code, off by default and only usable once Tony turns it
+  // on and sets a code from /backend. Two shapes: "spend" gives a free item
+  // for every full $threshold of paid items in the cart; "shareable" gives
+  // one free drink of choice per Shareable Tray in the cart. Only one shape
+  // is active at a time. Mutated in place by loadSiteConfig() below, same
+  // pattern as MENU/UPCHARGE/DAY_RULES.
+  const PROMO = {
+    active: false,
+    code: "",
+    type: "spend",
+    spend: { threshold: 15, freeItem: "green-tea" },
+    shareable: { choices: ["green-tea", "orange-tea", "viet-coffee"] },
+  };
+
   // Live HR/MIN/SEC (and DAYS, once there's more than a day left) boxes for
   // a promo deadline, styled to match the banner. Re-renders every second;
   // stops and hides itself the moment the deadline passes rather than
@@ -2156,6 +2187,30 @@ footer.site button:hover { color: var(--tea); }
         const endsAtMs = new Date(cd.endsAt).getTime();
         if (Number.isFinite(endsAtMs) && endsAtMs > Date.now()) startBannerCountdown(endsAtMs);
       }
+    }
+
+    if (cfg.promo && typeof cfg.promo === "object") {
+      PROMO.active = !!cfg.promo.active;
+      PROMO.code = String(cfg.promo.code || "").trim();
+      PROMO.type = cfg.promo.type === "shareable" ? "shareable" : "spend";
+
+      const sp = cfg.promo.spend || {};
+      const threshold = Number(sp.threshold);
+      if (Number.isFinite(threshold) && threshold > 0) PROMO.spend.threshold = threshold;
+      if (sp.freeItem && MENU.some(m => m.id === sp.freeItem && m.portions === 0)) {
+        PROMO.spend.freeItem = sp.freeItem;
+      }
+
+      const sh = cfg.promo.shareable || {};
+      if (Array.isArray(sh.choices)) {
+        const valid = sh.choices.filter(id => MENU.some(m => m.id === id && m.portions === 0));
+        if (valid.length) PROMO.shareable.choices = valid;
+      }
+
+      // A promo with no code, or a "spend" promo pointed at a since-removed
+      // item, can never actually be redeemed — treat it as off rather than
+      // showing customers a code field that can never do anything.
+      if (!PROMO.code) PROMO.active = false;
     }
   }
   const siteConfigReady = loadSiteConfig();
@@ -2416,6 +2471,106 @@ footer.site button:hover { color: var(--tea); }
     let lines = [];
     const trayWrap = document.getElementById("menuList");
 
+    // ---------- promo code ----------
+    //
+    // Off unless Tony has both turned it on and set a code from /backend
+    // (loadSiteConfig already refuses to leave PROMO.active true without a
+    // code). The field itself only exists in the DOM when a promo could
+    // possibly be running, so a customer never sees a code box that can't
+    // do anything.
+    const promoBox = document.getElementById("promoBox");
+    const promoInput = document.getElementById("promoCode");
+    const promoMsgEl = document.getElementById("promoMsg");
+    const promoChoicesEl = document.getElementById("promoChoices");
+    if (PROMO.active) {
+      promoBox.hidden = false;
+      promoInput.addEventListener("input", refresh);
+    }
+
+    // Which free drink the customer picked for each "shareable" redemption,
+    // by index. Kept across re-renders so re-picking on every keystroke
+    // elsewhere on the form doesn't reset an earlier choice.
+    let promoFreeChoices = [];
+
+    function promoCodeMatches() {
+      return PROMO.active
+        && promoInput.value.trim().toLowerCase() === PROMO.code.toLowerCase();
+    }
+
+    // What the entered code currently earns, given the paid subtotal. Never
+    // touches `total` — the free items it returns are always price 0, so
+    // they ride along on top of the paid total rather than changing it.
+    function computePromo() {
+      if (!promoCodeMatches()) return { count: 0, items: [] };
+
+      if (PROMO.type === "spend") {
+        const threshold = PROMO.spend.threshold;
+        const paidTotal = linesTotal(lines);
+        const count = threshold > 0 ? Math.floor(paidTotal / threshold) : 0;
+        if (!count) return { count: 0, items: [] };
+        const m = menuById(PROMO.spend.freeItem);
+        return { count, items: [{ qty: count, name: m.name + " (free — promo)", menuId: m.id, price: 0 }] };
+      }
+
+      // "shareable": one free drink of choice per Shareable Tray in the cart.
+      const count = lines.filter(l => l.type === "shareable").length;
+      if (!count) { promoFreeChoices = []; return { count: 0, items: [] }; }
+      while (promoFreeChoices.length < count) promoFreeChoices.push(PROMO.shareable.choices[0]);
+      promoFreeChoices.length = count;
+      const items = promoFreeChoices.map(id => {
+        const m = menuById(id);
+        return { qty: 1, name: m.name + " (free — promo)", menuId: id, price: 0 };
+      });
+      return { count, items };
+    }
+
+    // Message + (for "shareable") the per-drink pickers, right under the
+    // code field. Kept separate from computePromo so typing in the field
+    // doesn't have to recompute the picker markup unless it actually needs to.
+    function renderPromoUI(promo) {
+      if (!PROMO.active) return;
+      const typed = promoInput.value.trim();
+      if (!typed) { promoMsgEl.textContent = ""; promoMsgEl.className = "hint"; promoChoicesEl.innerHTML = ""; return; }
+      if (!promoCodeMatches()) {
+        promoMsgEl.textContent = "That code doesn't match.";
+        promoMsgEl.className = "hint warn";
+        promoChoicesEl.innerHTML = "";
+        return;
+      }
+      if (!promo.count) {
+        promoMsgEl.textContent = PROMO.type === "spend"
+          ? `Code applied — spend $${PROMO.spend.threshold} to unlock a free ${menuById(PROMO.spend.freeItem).name}.`
+          : "Code applied — add a Shareable Tray to unlock a free drink.";
+        promoMsgEl.className = "hint";
+        promoChoicesEl.innerHTML = "";
+        return;
+      }
+      if (PROMO.type === "spend") {
+        const name = menuById(PROMO.spend.freeItem).name;
+        promoMsgEl.textContent = `Code applied — ${promo.count} free ${name}${promo.count > 1 ? "s" : ""} added!`;
+        promoMsgEl.className = "hint good";
+        promoChoicesEl.innerHTML = "";
+        return;
+      }
+      promoMsgEl.textContent = `Code applied — choose your free drink${promo.count > 1 ? "s" : ""}:`;
+      promoMsgEl.className = "hint good";
+      const opts = PROMO.shareable.choices.map(id => menuById(id)).filter(Boolean);
+      promoChoicesEl.innerHTML = promoFreeChoices.map((sel, i) =>
+        `<label class="field promo-choice">
+          <span>Free drink${promo.count > 1 ? " #" + (i + 1) : ""}</span>
+          <select data-promo-slot="${i}">
+            ${opts.map(o => `<option value="${o.id}"${o.id === sel ? " selected" : ""}>${o.name}</option>`).join("")}
+          </select>
+        </label>`
+      ).join("");
+      promoChoicesEl.querySelectorAll("select[data-promo-slot]").forEach(sel => {
+        sel.addEventListener("change", () => {
+          promoFreeChoices[Number(sel.dataset.promoSlot)] = sel.value;
+          refresh();
+        });
+      });
+    }
+
     const timeSelect = document.getElementById("pickupTime");
     const dateInput = document.getElementById("pickupDate");
     dateInput.min = isoLocal(new Date());
@@ -2523,10 +2678,12 @@ footer.site button:hover { color: var(--tea); }
 
     function refresh() {
       const total = linesTotal(lines);
-      const items = linesToItems(lines);
+      const promo = computePromo();
+      const items = linesToItems(lines).concat(promo.items);
       const needed = portionsFor(items);
 
       document.getElementById("totalAmount").textContent = "$" + total;
+      renderPromoUI(promo);
 
       const trays = lines.filter(l => kindOf(menuById(l.type)) === "tray").length;
       const drinks = lines.length - trays;
@@ -2535,16 +2692,19 @@ footer.site button:hover { color: var(--tea); }
         ? "nothing added yet"
         : [trays ? trays + (trays === 1 ? " tray" : " trays") : "",
            drinks ? drinks + (drinks === 1 ? " drink" : " drinks") : "",
-           extras ? "$" + extras + " of paid extras" : ""].filter(Boolean).join(" · ");
+           extras ? "$" + extras + " of paid extras" : "",
+           promo.count ? promo.count + " free (promo)" : ""].filter(Boolean).join(" · ");
 
       // The same text the kitchen ticket will carry, shown while the order is
       // still being built, so a wrong choice is caught here and not at the
       // counter.
-      document.getElementById("kitchenNote").textContent = lines.length
-        ? lines.map(l => {
-            const c = chipsFor(l).map(x => x.text);
-            return "- " + labelFor(l) + (c.length ? "  →  " + c.join(", ") : "");
-          }).join("\n")
+      const kitchenLines = lines.map(l => {
+        const c = chipsFor(l).map(x => x.text);
+        return "- " + labelFor(l) + (c.length ? "  →  " + c.join(", ") : "");
+      });
+      promo.items.forEach(pi => kitchenLines.push(`- ${pi.name}${pi.qty > 1 ? " x" + pi.qty : ""}`));
+      document.getElementById("kitchenNote").textContent = kitchenLines.length
+        ? kitchenLines.join("\n")
         : "Add something to see this.";
 
       // Deliberately vague. The customer learns their order won't fit, not
@@ -2837,9 +2997,15 @@ footer.site button:hover { color: var(--tea); }
       // gets no signal about why it failed.
       if (document.getElementById("website").value.trim() !== "") return;
 
-      const items = linesToItems(lines);
+      const paidItems = linesToItems(lines);
       const total = linesTotal(lines);
-      if (!items.length) { showError("Add at least one item to your order."); return; }
+      if (!paidItems.length) { showError("Add at least one item to your order."); return; }
+
+      // Recomputed at submit time, not just trusted from the last render,
+      // so a stale free item can't ride along if something changed in the
+      // instant between the last keystroke and clicking "Place order".
+      const promo = computePromo();
+      const items = paidItems.concat(promo.items);
 
       const name = document.getElementById("custName").value.trim();
       const handle = document.getElementById("custHandle").value.trim().replace(/^@/, "");
@@ -2893,6 +3059,9 @@ footer.site button:hover { color: var(--tea); }
       };
       if (signedInEmail() && signedInEmail() === email) {
         orderPayload.ownerUid = currentUser.uid;
+      }
+      if (promo.count) {
+        orderPayload.promo = { code: PROMO.code, type: PROMO.type, freeCount: promo.count };
       }
 
       const savePromise = bookWithCapacity(pickupDate, portionsFor(items), orderPayload);
