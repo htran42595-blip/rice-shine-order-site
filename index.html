@@ -797,6 +797,16 @@ main.page[hidden] { display: none !important; }
   margin: 28px 0 0; max-width: none; font-family: 'Space Mono', monospace; font-weight: 700; font-size: 12.5px;
   letter-spacing: .14em; text-transform: uppercase; line-height: 1.55; color: var(--rice); text-shadow: 0 2px 16px rgba(15,10,26,.65);
 }
+/* Phones: keep the tagline on one line (scaled to the screen width) and
+   split the location line into two tidy centred lines. */
+@media (max-width: 600px) {
+  .hero-photo { padding-inline: 10px; }
+  .hero-photo-content { width: 100%; }
+  .hero-photo .hero-cta { max-width: 300px; margin-inline: auto; }
+  .hero-tagline { white-space: nowrap; font-size: min(12.5px, 2.6vw); letter-spacing: .06em; }
+  .meta-line { display: block; }
+  .meta-dot { display: none; }
+}
 .hero-emoji {
   height: 1.3em; width: auto; vertical-align: -0.3em; margin-left: 6px;
 }
@@ -970,7 +980,7 @@ footer.site button:hover { color: var(--tea); }
         <button type="button" class="btn" data-go="order">Start an order</button>
         <button type="button" class="btn ghost-photo" data-scroll="ourMenu">See the menu</button>
       </div>
-      <div class="hero-meta">Vacaville, California &middot; Mon&ndash;Sat &middot; Sun by request</div>
+      <div class="hero-meta"><span class="meta-line">Vacaville, California</span><span class="meta-dot"> &middot; </span><span class="meta-line">Mon&ndash;Sat &middot; Sun by request</span></div>
     </div>
   </section>
 
