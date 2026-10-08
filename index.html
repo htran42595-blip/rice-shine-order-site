@@ -732,7 +732,7 @@ footer.site ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 5p
    Rice & Shine — storefront chrome (nav + marketing pages)
    Added around the existing order page: the order form's own markup, ids
    and styles above are untouched. These rules only add the site nav and
-   the non-order pages (home, payment, pickup, facts),
+   the non-order pages (home, confirmation, facts),
    switched with a plain hidden-attribute router at the very end of the file.
    ========================================================================== */
 
@@ -946,8 +946,7 @@ footer.site button:hover { color: var(--tea); }
     <nav class="nav" aria-label="Pages">
       <button type="button" data-go="home">Home</button>
       <button type="button" data-go="order">Order now</button>
-      <button type="button" data-go="pay">Payment</button>
-      <button type="button" data-go="pickup">Pickup</button>
+      <button type="button" data-go="confirm">Confirmation</button>
       <button type="button" data-go="facts">Food facts</button>
     </nav>
   </div>
@@ -1037,33 +1036,6 @@ footer.site button:hover { color: var(--tea); }
   </section>
 </main>
 
-<!-- ==================== PICKUP ==================== -->
-<main class="page" id="page-pickup" hidden>
-  <div class="page-head">
-    <div class="narrow">
-      <h1>Picking up your order</h1>
-    </div>
-  </div>
-  <section class="band">
-    <div class="narrow">
-      <div class="callout tea">
-        <b>Where to come</b>
-        <p>Vacaville, CA 95687</p>
-        <p>The exact address will be in your confirmation email, after you've placed the order.</p>
-      </div>
-
-      <h2 style="margin-top:30px">When you arrive</h2>
-      <ol class="steps">
-        <li><div><h4>Stay in your car</h4></div></li>
-        <li><div><h4>Message us your Order Reference Number, car's colour and model</h4>
-          <p>On Instagram, <a class="ighandle" href="https://instagram.com/ricenshine.sushibake" target="_blank" rel="noopener">@ricenshine.sushibake</a>.</p></div></li>
-        <li><div><h4>We walk it out</h4></div></li>
-      </ol>
-      </div>
-    </div>
-  </section>
-</main>
-
 <!-- ==================== FOOD FACTS ==================== -->
 <main class="page" id="page-facts" hidden>
   <section class="band">
@@ -1096,16 +1068,11 @@ footer.site button:hover { color: var(--tea); }
   </section>
 </main>
 
-<!-- ==================== PAYMENT ==================== -->
-<main class="page" id="page-pay" hidden>
-  <div class="page-head">
-    <div class="narrow">
-      <h1>Paying for your order</h1>
-    </div>
-  </div>
+<!-- ==================== CONFIRMATION ==================== -->
+<main class="page" id="page-confirm" hidden>
   <section class="band">
     <div class="narrow">
-      <h2 style="margin-top:26px">Four ways to pay</h2>
+      <h2 style="margin-top:30px">Four ways to pay</h2>
       <p class="hint">Include your Order Reference Code when you pay via Venmo, Zelle or Apple Pay.</p>
       <div class="pays">
         <div class="pay">
@@ -1161,6 +1128,20 @@ footer.site button:hover { color: var(--tea); }
           <tr><td>What if I need to cancel?</td><td>Nothing is owed. Change or cancel through your order link, or message us on Instagram.</td></tr>
         </table>
       </div>
+
+      <div class="callout tea" style="margin-top:34px">
+        <b>Where to come</b>
+        <p>Vacaville, CA 95687</p>
+        <p>The exact address will be in your confirmation email, after you've placed the order.</p>
+      </div>
+
+      <h2 style="margin-top:30px">When you arrive</h2>
+      <ol class="steps">
+        <li><div><h4>Stay in your car</h4></div></li>
+        <li><div><h4>Message us your Order Reference Number, car's colour and model</h4>
+          <p>On Instagram, <a class="ighandle" href="https://instagram.com/ricenshine.sushibake" target="_blank" rel="noopener">@ricenshine.sushibake</a>.</p></div></li>
+        <li><div><h4>We walk it out</h4></div></li>
+      </ol>
     </div>
   </section>
 </main>
@@ -1311,7 +1292,7 @@ footer.site button:hover { color: var(--tea); }
           <div class="step-head" style="margin-top:38px"><span class="step-n">5</span><h2>Place it</h2></div>
           <div class="callout good">
             <b>Nothing is charged now</b>
-            <p>Pay when you collect &mdash; Venmo, Zelle, Apple Pay or cash.</p>
+            <p>Order confirmation will be sent to your email</p>
           </div>
           <div class="error-box" id="errorBox"></div>
           <button type="submit" class="primary" id="submitBtn" disabled>Place order</button>
@@ -1517,8 +1498,7 @@ footer.site button:hover { color: var(--tea); }
       <h4>Pages</h4>
       <ul>
         <li><button type="button" data-go="order">Order now</button></li>
-        <li><button type="button" data-go="pay">Payment</button></li>
-        <li><button type="button" data-go="pickup">Pickup</button></li>
+        <li><button type="button" data-go="confirm">Confirmation</button></li>
         <li><button type="button" data-go="facts">Food facts</button></li>
       </ul>
     </div>
