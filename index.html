@@ -538,7 +538,7 @@ button.primary:not(:disabled):hover { filter: brightness(1.07); }
    the handle is what a customer types into search. */
 .ighandle {
   font-family: 'Bricolage Grotesque', sans-serif; font-weight: 700;
-  color: var(--tea); text-decoration: none;
+  color: var(--ph-ink); text-decoration: none;
   border-bottom: 2px solid currentColor; padding-bottom: 1px;
   white-space: nowrap;
 }
@@ -550,6 +550,8 @@ footer.site {
   border-top: 1px solid var(--hairline);
 }
 footer.site a { color: var(--tea); }
+footer.site a.ighandle { color: var(--ph-ink); }
+footer.site a.ighandle:hover { color: var(--ink); }
 footer.site .cols { display: grid; gap: 18px; grid-template-columns: 1fr; }
 @media (min-width: 700px) { footer.site .cols { grid-template-columns: 1.4fr 1fr; } }
 footer.site h4 { color: var(--nori); margin-bottom: 6px; }
