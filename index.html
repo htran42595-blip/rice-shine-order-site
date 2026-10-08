@@ -732,7 +732,7 @@ footer.site ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 5p
    Rice & Shine — storefront chrome (nav + marketing pages)
    Added around the existing order page: the order form's own markup, ids
    and styles above are untouched. These rules only add the site nav and
-   the non-order pages (home, menu, how to order, payment, pickup, facts),
+   the non-order pages (home, menu, payment, pickup, facts),
    switched with a plain hidden-attribute router at the very end of the file.
    ========================================================================== */
 
@@ -947,7 +947,6 @@ footer.site button:hover { color: var(--tea); }
       <button type="button" data-go="home">Home</button>
       <button type="button" data-go="order">Order now</button>
       <button type="button" data-go="menu">Menu &amp; specials</button>
-      <button type="button" data-go="howto">How to order</button>
       <button type="button" data-go="pay">Payment</button>
       <button type="button" data-go="pickup">Pickup</button>
       <button type="button" data-go="facts">Food facts</button>
@@ -979,7 +978,7 @@ footer.site button:hover { color: var(--tea); }
 
   <section class="band">
     <div class="wrap">
-      <h2>Two trays and three drinks</h2>
+      <h2>Our menu</h2>
       <p style="color:var(--ink-soft);margin:8px 0 22px">That's the whole list. It keeps the kitchen honest and the tray hot.</p>
       <div class="picker">
         <div class="pick" data-shot="card-personal">
@@ -1005,6 +1004,24 @@ footer.site button:hover { color: var(--tea); }
         <div class="pick" data-shot="card-viet-coffee"><span class="pick-price">$4</span><div class="pick-info"><h3>Vietnamese Coffee</h3></div></div>
       </div>
       <p style="margin-top:20px"><button type="button" class="btn" data-go="order">Start an order</button></p>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <h2>Catering &amp; Events</h2>
+      <p style="color:var(--ink-soft);margin:8px 0 0">Let us cater your special days.</p>
+      <p style="margin-top:14px">Message us on Instagram <a class="ighandle" href="https://instagram.com/ricenshine.sushibake" target="_blank" rel="noopener">@ricenshine.sushibake</a> to talk details.</p>
+
+      <h2 style="margin-top:34px">Pickup hours</h2>
+      <div class="tbl-scroll">
+        <table>
+          <tr><th>Day</th><th>Pickup window</th></tr>
+          <tr><td>Monday &ndash; Friday</td><td class="num" data-hours="weekday">5:45 PM &ndash; 11:00 PM</td></tr>
+          <tr><td>Saturday</td><td class="num" data-hours="sat">8:00 AM &ndash; 8:00 PM</td></tr>
+          <tr><td>Sunday</td><td class="num">Upon request &mdash; please reach out to us</td></tr>
+        </table>
+      </div>
     </div>
   </section>
 
@@ -1059,70 +1076,8 @@ footer.site button:hover { color: var(--tea); }
         <div class="pick" data-shot="card-viet-coffee"><span class="pick-price">$4</span><div class="pick-info"><h3>Vietnamese Coffee</h3></div></div>
       </div>
 
-      <h2 style="margin-top:34px">Catering &amp; Events</h2>
-      <p style="color:var(--ink-soft);margin:8px 0 0">Let us cater your special days.</p>
-      <p style="margin-top:14px">Message us on Instagram <a class="ighandle" href="https://instagram.com/ricenshine.sushibake" target="_blank" rel="noopener">@ricenshine.sushibake</a> to talk details.</p>
-
-      <h2 style="margin-top:34px">Pickup hours</h2>
-      <div class="tbl-scroll">
-        <table>
-          <tr><th>Day</th><th>Pickup window</th></tr>
-          <tr><td>Monday &ndash; Friday</td><td class="num" data-hours="weekday">5:45 PM &ndash; 11:00 PM</td></tr>
-          <tr><td>Saturday</td><td class="num" data-hours="sat">8:00 AM &ndash; 8:00 PM</td></tr>
-          <tr><td>Sunday</td><td class="num">Upon request &mdash; please reach out to us</td></tr>
-        </table>
-      </div>
 
       <p style="margin-top:26px"><button type="button" class="btn" data-go="order">Start an order</button></p>
-    </div>
-  </section>
-</main>
-
-<!-- ==================== HOW TO ORDER ==================== -->
-<main class="page" id="page-howto" hidden>
-  <div class="page-head">
-    <div class="narrow">
-      <h1>How to order</h1>
-    </div>
-  </div>
-  <section class="band">
-    <div class="narrow">
-      <ol class="steps">
-        <li><div><h4>Pick your trays and drinks</h4>
-          <span id="extrasPriceNote" hidden></span></div></li>
-        <li><div><h4>Choose a pickup day and time</h4></div></li>
-        <li><div><h4>Leave your name, email and phone</h4></div></li>
-        <li><div><h4>Submit</h4>
-          <p>Your confirmation email arrives within a few seconds. That's it &mdash; you're booked.</p></div></li>
-      </ol>
-
-      <h2 style="margin-top:34px">Changing your order</h2>
-      <p>Your confirmation email has a <strong>View or change my order</strong> button. It opens
-      your own private link.</p>
-
-      <div class="tbl-scroll">
-        <table>
-          <tr><th>You can change</th><th>You can't change</th></tr>
-          <tr>
-            <td>Items and quantities<br>Pickup day and time<br>Your notes</td>
-            <td>Your name<br>Your contact details<br>Whether it's paid</td>
-          </tr>
-        </table>
-      </div>
-
-      <div class="callout warn">
-        <b>Up to 24 hours before pickup</b>
-        <p>That's when shopping and prep for your day start. Both your old and your new pickup
-        time have to be more than 24 hours out. Inside 24 hours, message us on Instagram
-        <a class="ighandle" href="https://instagram.com/ricenshine.sushibake" target="_blank" rel="noopener">@ricenshine.sushibake</a>
-        and we'll change it for you if we can.</p>
-      </div>
-
-      <div class="callout tea">
-        <b>The first change asks you to confirm it's you</b>
-        <p>We email a one-click sign-in link to the address on the order. It's how we make sure
-        nobody else can edit your order. After the first time, that device remembers you.</p>
-      </div>
     </div>
   </section>
 </main>
@@ -1623,7 +1578,6 @@ footer.site button:hover { color: var(--tea); }
       <ul>
         <li><button type="button" data-go="order">Order now</button></li>
         <li><button type="button" data-go="menu">Menu &amp; specials</button></li>
-        <li><button type="button" data-go="howto">How to order</button></li>
         <li><button type="button" data-go="pay">Payment</button></li>
         <li><button type="button" data-go="pickup">Pickup</button></li>
         <li><button type="button" data-go="facts">Food facts</button></li>
