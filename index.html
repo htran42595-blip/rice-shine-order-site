@@ -58,6 +58,7 @@ a { color: var(--tea); }
 :focus-visible { outline: 3px solid var(--tea); outline-offset: 3px; border-radius: 4px; }
 
 .mono { font-family: 'Space Mono', ui-monospace, monospace; }
+html, body { overflow-x: clip; }
 .wrap { width: min(1080px, 100% - 40px); margin-inline: auto; }
 .hidden { display: none !important; }
 
@@ -157,21 +158,39 @@ section.band { padding: 40px 0 64px; }
    are scrolling a long form. It is a child of #orderView, so the page's own
    state machine hides it along with the form when a confirmation takes over,
    with no extra wiring. */
+.bar-review, .bar-promo { display: none; }
 @media (max-width: 939px) {
-  section.band { padding-bottom: 104px; }
+  section.band { padding-bottom: 150px; }
+  .order-cols { grid-template-columns: minmax(0, 1fr); }
   .order-side {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
     background: var(--rice); border-top: 1px solid var(--line);
+    box-shadow: 0 -6px 20px rgba(37,26,56,.10);
+    padding-bottom: env(safe-area-inset-bottom);
   }
   .order-side .summary {
-    border: 0; border-radius: 0; padding: 10px 0;
-    width: min(1080px, 100% - 40px); margin-inline: auto;
-    display: flex; align-items: center; justify-content: space-between; gap: 16px;
+    border: 0; border-radius: 0; padding: 12px 0 14px;
+    width: calc(100% - 32px); margin-inline: auto;
+    display: grid; grid-template-columns: minmax(0, 1fr) auto;
+    column-gap: 14px; row-gap: 2px; align-items: center;
   }
   .order-side .summary-top { display: none; }
-  .order-side .summary .big { font-size: 24px; }
-  .order-side .summary .k { margin: 0 !important; font-size: 12.5px; text-align: right; }
+  .order-side .summary .big { grid-column: 1; grid-row: 1; font-size: 32px; line-height: 1.05; }
+  .order-side .summary .k { grid-column: 1; grid-row: 2; margin: 0 !important; font-size: 15px; text-align: left; color: var(--ink); }
+  .order-side .summary .bar-review {
+    display: block; grid-column: 2; grid-row: 1 / span 2; align-self: center;
+    min-height: 52px; padding: 0 22px; border: 0; border-radius: 999px;
+    background: var(--tea); color: var(--tea-ink);
+    font: 700 17px/1 'Bricolage Grotesque', system-ui, sans-serif; cursor: pointer;
+  }
   .order-side .summary .pay-note { display: none; }
+  .order-side .summary .promo-box { display: none; grid-column: 1 / -1; margin-top: 10px; }
+  .order-side.promo-open .summary .promo-box { display: block; }
+  .promo-box:not([hidden]) ~ .bar-promo {
+    display: block; grid-column: 1 / -1; justify-self: start; margin-top: 4px; padding: 10px 0 2px;
+    background: none; border: 0; color: var(--tea); font: 700 15px/1.2 'Karla', system-ui, sans-serif;
+    text-decoration: underline; cursor: pointer; min-height: 44px;
+  }
 }
 
 .step-head { display: flex; align-items: center; gap: 11px; margin-bottom: 4px; }
@@ -1222,7 +1241,7 @@ footer.site button:hover { color: var(--tea); }
           </div>
 
           <!-- 2 --------------------------------------------------------- -->
-          <div class="step-head" style="margin-top:38px">
+          <div class="step-head" id="yourOrderStep" style="margin-top:38px;scroll-margin-top:110px">
             <span class="step-n">2</span><h2>Your order</h2>
             <button type="button" class="linkbtn" data-act="reset" style="margin-left:auto">Start over</button>
           </div>
@@ -1312,6 +1331,7 @@ footer.site button:hover { color: var(--tea); }
             </div>
             <span class="big mono" id="totalAmount">$0</span>
             <div class="k" id="tCount">nothing added yet</div>
+            <button type="button" class="bar-review" data-scroll="yourOrderStep">Review order</button>
             <div class="promo-box" id="promoBox" hidden>
               <label class="field">
                 <span>Promo code</span>
@@ -1320,6 +1340,7 @@ footer.site button:hover { color: var(--tea); }
               <div class="hint" id="promoMsg"></div>
               <div id="promoChoices"></div>
             </div>
+            <button type="button" class="bar-promo" id="barPromoToggle">Have a promo code?</button>
             <div class="kitchen">
               <div class="kh">What the kitchen sees</div>
               <pre id="kitchenNote">Add something to see this.</pre>
@@ -3475,6 +3496,16 @@ footer.site button:hover { color: var(--tea); }
     var el = document.getElementById(btn.getAttribute("data-scroll"));
     if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
   });
+
+  // Mobile order bar: "Have a promo code?" opens/closes the code field.
+  var promoToggle = document.getElementById("barPromoToggle");
+  if (promoToggle) {
+    promoToggle.addEventListener("click", function () {
+      var side = promoToggle.closest(".order-side");
+      var open = side.classList.toggle("promo-open");
+      promoToggle.textContent = open ? "Hide promo code" : "Have a promo code?";
+    });
+  }
 
   var initial = window.location.search ? "order" : "home";
   show(initial);
