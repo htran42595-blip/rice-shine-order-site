@@ -792,11 +792,16 @@ main.page[hidden] { display: none !important; }
 .nav::-webkit-scrollbar { display: none; }
 .nav button {
   font: inherit; font-size: 14px; color: var(--ink-soft);
-  background: none; border: 0; padding: 7px 2px; margin: 0 9px;
-  cursor: pointer; white-space: nowrap; border-bottom: 2px solid transparent;
+  background: none; border: 0; padding: 8px 14px; margin: 0 1px;
+  cursor: pointer; white-space: nowrap; border-radius: 999px;
 }
-.nav button:hover { color: var(--tea); }
-.nav button[aria-current="page"] { color: var(--nori); border-bottom-color: var(--tea); font-weight: 700; }
+.nav button:hover { color: var(--tea); background: rgba(122, 88, 173, .10); }
+/* The page you are on: a filled purple pill, so it is obvious at a glance. */
+.nav button[aria-current="page"] {
+  background: var(--tea); color: var(--tea-ink); font-weight: 700;
+  box-shadow: 0 4px 12px -5px rgba(122, 88, 173, .7);
+}
+.nav button[aria-current="page"]:hover { background: var(--tea); color: var(--tea-ink); }
 @media (max-width: 780px) { header.top .tagline { display: none; } }
 
 /* --- hero (home) --- */
@@ -3532,6 +3537,10 @@ footer.site button:hover { color: var(--tea); }
         b.setAttribute("aria-current", b.getAttribute("data-go") === id ? "page" : "false");
       }
     });
+    // On a phone the tab row scrolls sideways: bring the current tab into view.
+    var navEl = document.querySelector(".nav");
+    var cur = navEl && navEl.querySelector('[aria-current="page"]');
+    if (cur) navEl.scrollLeft = cur.offsetLeft - (navEl.clientWidth - cur.offsetWidth) / 2;
     window.scrollTo(0, 0);
   }
 
