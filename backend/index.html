@@ -177,13 +177,21 @@
     <div class="card">
       <h2>Announcement banner</h2>
       <p class="sub">Shows at the top of every page on the site — e.g. "Not accepting orders until
-        further notice" or a promo. Ordering itself keeps working underneath it either way.</p>
+        further notice" or a promo.</p>
       <div class="toggle-row">
         <label class="field-label" for="bannerActive" style="margin:0">Show banner</label>
         <label class="switch"><input type="checkbox" id="bannerActive"><span class="slider"></span></label>
       </div>
       <label class="field-label" for="bannerText">Banner message</label>
       <textarea id="bannerText" maxlength="200" placeholder="e.g. Not accepting orders until further notice"></textarea>
+
+      <div class="toggle-row" style="margin-top:16px">
+        <label class="field-label" for="pauseOrdering" style="margin:0">Pause online ordering</label>
+        <label class="switch"><input type="checkbox" id="pauseOrdering"><span class="slider"></span></label>
+      </div>
+      <div class="hint">Greys out the Add buttons and Place order on the site and tells customers to
+        order through Instagram DM instead. Also turns on by itself whenever the banner is showing
+        and its message mentions "maintenance".</div>
 
       <div class="toggle-row" style="margin-top:16px">
         <label class="field-label" for="countdownEnabled" style="margin:0">Add a countdown timer</label>
@@ -328,7 +336,7 @@
       5: { start: "5:45 PM", end: "11:00 PM", cap: 10 },
       6: { start: "8:00 AM", end: "8:00 PM", cap: 60 },
     },
-    announcement: { active: false, text: "", countdown: { enabled: false, endsAt: "" } },
+    announcement: { active: false, text: "", pauseOrdering: false, countdown: { enabled: false, endsAt: "" } },
     promo: {
       active: false, code: "", type: "spend",
       spend: { threshold: 15, freeItem: "green-tea" },
@@ -489,6 +497,7 @@
     const ann = Object.assign({}, DEFAULTS.announcement, cfg.announcement || {});
     document.getElementById("bannerActive").checked = !!ann.active;
     document.getElementById("bannerText").value = ann.text || "";
+    document.getElementById("pauseOrdering").checked = !!ann.pauseOrdering;
     const cd = Object.assign({}, DEFAULTS.announcement.countdown, ann.countdown || {});
     document.getElementById("countdownEnabled").checked = !!cd.enabled;
     document.getElementById("countdownEndsAt").value = cd.endsAt || "";
@@ -590,6 +599,7 @@
     const announcement = {
       active: document.getElementById("bannerActive").checked,
       text: document.getElementById("bannerText").value.trim(),
+      pauseOrdering: document.getElementById("pauseOrdering").checked,
       countdown: { enabled: countdownEnabled, endsAt: countdownEnabled ? countdownEndsAt : "" },
     };
 

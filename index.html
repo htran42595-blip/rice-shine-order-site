@@ -660,6 +660,20 @@ footer.site ul { list-style: none; padding: 0; margin: 0; display: grid; gap: 5p
 .pick-count[hidden] { display: none; }
 .add-btn { min-height: 44px; padding-inline: 22px; }
 
+/* --- ordering paused (maintenance): Add buttons and Place order go grey and
+   dead, and a note points customers to Instagram DM instead --- */
+body.ordering-paused .add-btn,
+body.ordering-paused .add-btn:hover,
+body.ordering-paused .step-btn,
+body.ordering-paused .step-btn:hover {
+  background: #d9d6dd; color: #8a8590; cursor: not-allowed; box-shadow: none;
+}
+body.ordering-paused .stepper { background: #d9d6dd; box-shadow: none; }
+body.ordering-paused #picker .pick { filter: grayscale(.85); opacity: .7; }
+body.ordering-paused #submitBtn { background: #bdb8c3; border-color: #bdb8c3; opacity: 1; cursor: not-allowed; }
+#orderingPausedNote { margin-bottom: 22px; }
+#orderingPausedNote[hidden] { display: none; }
+
 @media (max-width: 460px) {
   .picker { grid-template-columns: 1fr; }
   .pick { aspect-ratio: 16 / 11; }
@@ -1235,6 +1249,10 @@ footer.site button:hover { color: var(--tea); }
         <div class="order-main">
 
           <!-- 1 --------------------------------------------------------- -->
+          <div class="callout warn" id="orderingPausedNote" hidden>
+            <b>Online ordering is paused right now</b>
+            <p>Please send us your order on Instagram DM at <a class="ighandle" href="https://instagram.com/ricenshine.sushibake" target="_blank" rel="noopener">@ricenshine.sushibake</a> and we'll take care of you there.</p>
+          </div>
           <div class="step-head"><span class="step-n">1</span><h2>Choose your items</h2></div>
           <div class="picker" id="picker">
             <div class="pick" data-shot="card-personal">
@@ -1962,6 +1980,21 @@ footer.site button:hover { color: var(--tea); }
   // gives one free (Tony-picked) drink to any order picked up on a single
   // Tony-picked date. Only one shape is active at a time. Mutated in place
   // by loadSiteConfig() below, same pattern as MENU/UPCHARGE/DAY_RULES.
+  // True while /backend has online ordering paused (maintenance). Set by
+  // loadSiteConfig(); the order form refuses adds and submits while it's on.
+  let ORDERING_PAUSED = false;
+  function applyOrderingPause() {
+    document.body.classList.toggle("ordering-paused", ORDERING_PAUSED);
+    const note = document.getElementById("orderingPausedNote");
+    if (note) note.hidden = !ORDERING_PAUSED;
+    document.querySelectorAll("#picker .add-btn, #picker .step-btn").forEach(b => {
+      b.disabled = ORDERING_PAUSED;
+      b.setAttribute("aria-disabled", String(ORDERING_PAUSED));
+    });
+    const submit = document.getElementById("submitBtn");
+    if (submit && ORDERING_PAUSED) submit.disabled = true;
+  }
+
   const PROMO = {
     active: false,
     code: "",
@@ -2076,6 +2109,16 @@ footer.site button:hover { color: var(--tea); }
       const satText = `${DAY_RULES[6].start} – ${DAY_RULES[6].end}`;
       document.querySelectorAll('[data-hours="weekday"]').forEach(el => { el.textContent = wdText; });
       document.querySelectorAll('[data-hours="sat"]').forEach(el => { el.textContent = satText; });
+    }
+
+    // Ordering pauses when the /backend "Pause online ordering" switch is on,
+    // or whenever a showing banner mentions maintenance, so a maintenance
+    // banner alone is enough to stop orders coming in through the site.
+    if (cfg.announcement && typeof cfg.announcement === "object") {
+      const a = cfg.announcement;
+      const bannerShowing = !!a.active && String(a.text || "").trim() !== "";
+      ORDERING_PAUSED = !!a.pauseOrdering || (bannerShowing && /maintenance/i.test(String(a.text)));
+      applyOrderingPause();
     }
 
     if (cfg.announcement && cfg.announcement.active && String(cfg.announcement.text || "").trim()) {
@@ -2657,7 +2700,8 @@ footer.site button:hover { color: var(--tea); }
         && document.getElementById("custName").value.trim()
         && looksLikeEmail(document.getElementById("custEmail").value)
         && dateInput.value && timeSelect.value
-        && !dayState.full && !overCapacity;
+        && !dayState.full && !overCapacity
+        && !ORDERING_PAUSED;
       document.getElementById("submitBtn").disabled = !ok;
     }
 
@@ -2909,6 +2953,7 @@ footer.site button:hover { color: var(--tea); }
       const btn = e.target.closest("button[data-act]");
       if (!btn) return;
       const act = btn.dataset.act, i = Number(btn.dataset.i);
+      if (ORDERING_PAUSED && act !== "toggle") return;
       if (act === "add") {
         if (!menuById(btn.dataset.type)) return;
         if (lines.length >= 40) return;   // a sane ceiling on one order
@@ -2945,6 +2990,11 @@ footer.site button:hover { color: var(--tea); }
     document.getElementById("riceForm").addEventListener("submit", async (e) => {
       e.preventDefault();
       document.getElementById("errorBox").classList.remove("show");
+
+      if (ORDERING_PAUSED) {
+        showError("Online ordering is paused right now. Please send us your order on Instagram DM @ricenshine.sushibake.");
+        return;
+      }
 
       // Honeypot: real visitors never fill this. Drop silently so the bot
       // gets no signal about why it failed.
